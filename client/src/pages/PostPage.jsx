@@ -114,7 +114,7 @@ function PostPage() {
       </div>
 
       {/* Sort Selector for Comments */}
-      <div style={{ display: 'flex', gap: '4px', margin: '0 0 16px' }}>
+      <div style={{ display: 'none', gap: '4px', margin: '0 0 16px' }}>
         {['hot', 'new', 'top'].map(s => (
           <button
             key={s}
