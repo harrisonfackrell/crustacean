@@ -75,9 +75,6 @@ function CommunityManagePage() {
               <Link to="/"><strong>c/All</strong></Link>
               <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>Every post from every community.</div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <Link to="/" className="secondary">View</Link>
-            </div>
           </div>
           {filteredCommunities.length === 0 ? (
             <p className="empty-state">{communities.length === 0 ? 'No communities yet' : 'No communities match your search'}</p>

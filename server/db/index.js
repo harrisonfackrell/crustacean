@@ -239,6 +239,29 @@ class Database {
     }
     return null;
   }
+
+  destroy() {
+    // Close the current database
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+
+    // Delete the database file
+    if (fs.existsSync(this.dbPath)) {
+      fs.unlinkSync(this.dbPath);
+    }
+
+    // Reinitialize with a fresh database
+    this.db = new this.SQL.Database();
+    this.db.run(SCHEMA);
+    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('auto_interact_enabled', 'false')");
+    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_url', 'http://localhost:11434/v1')");
+    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_key', '')");
+    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_model', 'llama3')");
+    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('global_system_prompt', '')");
+    this.save();
+  }
 }
 
 // Singleton instance - initialized by server/index.js

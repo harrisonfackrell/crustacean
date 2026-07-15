@@ -2,7 +2,8 @@ import { useState } from 'react';
 
 function BulkImportModal({ onClose, onImport }) {
   const [context, setContext] = useState('');
-  const [count, setCount] = useState(3);
+  const [avatarCount, setAvatarCount] = useState(3);
+  const [communityCount, setCommunityCount] = useState(2);
   const [includeExisting, setIncludeExisting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState(null);
@@ -11,7 +12,7 @@ function BulkImportModal({ onClose, onImport }) {
     setGenerating(true);
     setError(null);
     try {
-      const data = await onImport({ context, count, includeExisting });
+      const data = await onImport({ context, avatarCount, communityCount, includeExisting });
       // If import succeeds, close the modal
       onClose();
     } catch (err) {
@@ -42,13 +43,24 @@ function BulkImportModal({ onClose, onImport }) {
             />
           </div>
           <div className="form-group">
-            <label>Number of Avatars & Communities: {count}</label>
+            <label>Number of Avatars: {avatarCount}</label>
             <input
               type="range"
-              min="1"
+              min="0"
               max="10"
-              value={count}
-              onChange={e => setCount(Number(e.target.value))}
+              value={avatarCount}
+              onChange={e => setAvatarCount(Number(e.target.value))}
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div className="form-group">
+            <label>Number of Communities: {communityCount}</label>
+            <input
+              type="range"
+              min="0"
+              max="10"
+              value={communityCount}
+              onChange={e => setCommunityCount(Number(e.target.value))}
               style={{ width: '100%' }}
             />
           </div>
@@ -58,7 +70,7 @@ function BulkImportModal({ onClose, onImport }) {
               checked={includeExisting}
               onChange={e => setIncludeExisting(e.target.checked)}
             />
-            Include existing data as reference (to avoid duplicates)
+            Include existing data as reference
           </label>
           {error && (
             <div style={{ color: 'var(--color-danger)', fontSize: '14px', marginBottom: '12px' }}>

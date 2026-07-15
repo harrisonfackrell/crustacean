@@ -675,6 +675,14 @@ router.post('/reset/all', (req, res) => {
   res.json({ success: true });
 });
 
+// DATABASE DESTROY (Resets ALL data - emergent AND non-emergent)
+// ============================================================
+
+router.post('/destroy/database', (req, res) => {
+  getDb().destroy();
+  res.json({ success: true });
+});
+
 // ============================================================
 // LLM CONTENT GENERATION (Manual Provocation)
 // ============================================================
@@ -770,15 +778,22 @@ router.post('/llm/generate-vote', async (req, res) => {
 // ============================================================
 
 router.post('/llm/generate-bulk-import', async (req, res) => {
-  const { context, count, existingData } = req.body;
-  const avatarCount = Number(count) || 3;
+  const { context, avatarCount, communityCount, existingData } = req.body;
+  const avatars = Number(avatarCount) || 0;
+  const communities = Number(communityCount) || 0;
 
-  if (!avatarCount || avatarCount < 1 || avatarCount > 10) {
-    return res.status(400).json({ error: 'count must be between 1 and 10' });
+  if (avatars < 0 || avatars > 10) {
+    return res.status(400).json({ error: 'avatarCount must be between 0 and 10' });
+  }
+  if (communities < 0 || communities > 10) {
+    return res.status(400).json({ error: 'communityCount must be between 0 and 10' });
+  }
+  if (avatars === 0 && communities === 0) {
+    return res.status(400).json({ error: 'at least one of avatarCount or communityCount must be greater than 0' });
   }
 
   try {
-    const result = await getLLMService().generateBulkImport(context || '', avatarCount, existingData || null);
+    const result = await getLLMService().generateBulkImport(context || '', avatars, communities, existingData || null);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });

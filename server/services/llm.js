@@ -236,7 +236,7 @@ Your evaluation (-10 to 10):
    * Generate a bulk import JSON payload compatible with the import API.
    * Returns an object with type 'full_export' and data containing avatars and communities arrays.
    */
-  async generateBulkImport(context, count, existingData = null) {
+  async generateBulkImport(context, avatarCount, communityCount, existingData = null) {
     // Build existing data reference text if provided — include the full export
     let existingDataText = '';
     if (existingData && existingData.type === 'full_export' && existingData.data) {
@@ -254,7 +254,7 @@ Your evaluation (-10 to 10):
       
       const communityDetails = existingCommunities.map(c => {
         const d = c.data || {};
-        return `  - "${d.name}" — ${d.description || 'No description'}`;
+               return `  - "${d.name}" — ${d.description || 'No description'}`;
       }).join('\n');
       
       existingDataText = `
@@ -278,7 +278,7 @@ ${communityDetails || '  (none)'}
     const systemPrompt = `
 You are a helpful assistant that generates structured JSON data for creating AI avatars and communities in a social network platform called Crustacean.
 
-Your task: Generate ${count} AI avatar entries and ${count} community entries as a valid JSON object.
+Your task: Generate ${avatarCount} AI avatar entries and ${communityCount} community entries as a valid JSON object.
 
 The output MUST be a valid JSON object with this exact structure:
 {
@@ -313,7 +313,7 @@ The output MUST be a valid JSON object with this exact structure:
 }
 
 Rules:
-- Generate exactly ${count} avatars and ${count} communities.
+- Generate exactly ${avatarCount} avatars and ${communityCount} communities.
 - Each avatar must have a unique name, handle, and bio.
 - Handles should be lowercase, no spaces or special characters, max 20 characters.
 - Community rules arrays should have 3-5 rules each.
@@ -324,7 +324,7 @@ Rules:
 ${existingDataText}
     `.trim();
 
-    const userPrompt = `Generate ${count} AI avatars and ${count} communities for a social network platform.
+    const userPrompt = `Generate ${avatarCount} AI avatars and ${communityCount} communities for a social network platform.
 
 Context provided by the user: "${context || 'No specific context — be creative!'}"
 

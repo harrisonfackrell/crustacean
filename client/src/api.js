@@ -81,6 +81,9 @@ export const api = {
   // Global Reset
   resetAll: () => request('POST', '/reset/all'),
 
+  // Database Destroy
+  destroyDatabase: () => request('POST', '/destroy/database'),
+
   // LLM Generation
   generatePost: (data) => request('POST', '/llm/generate-post', data),
   generateComment: (data) => request('POST', '/llm/generate-comment', data),

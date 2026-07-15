@@ -101,9 +101,20 @@ function SettingsPage() {
     }
   };
 
-  const handleQuickStart = async ({ context, count, includeExisting }) => {
+  const handleDatabaseDestroy = async () => {
+    if (!confirm('DESTROY THE ENTIRE DATABASE? This will clear ALL data including avatars, communities, settings, and rules. This cannot be undone.')) return;
+    if (!confirm('THIS WILL PERMANENTLY DELETE EVERYTHING. Are you absolutely sure?')) return;
     try {
-      const payload = { context, count };
+      await api.destroyDatabase();
+      loadData();
+    } catch (err) {
+      console.error('Failed to destroy database:', err);
+    }
+  };
+
+  const handleQuickStart = async ({ context, avatarCount, communityCount, includeExisting }) => {
+    try {
+      const payload = { context, avatarCount, communityCount };
       
       // If the checkbox is checked, fetch and include existing data as reference
       if (includeExisting) {
@@ -129,14 +140,24 @@ function SettingsPage() {
   return (
     <div className="container">
 
-      {/* Quick Start */}
-      <div className="card">
-        <div className="card-header"><h3>Quick Start</h3></div>
+      {/* Global Actions */}
+      <div className="card" style={{ marginTop: '16px' }}>
+        <div className="card-header"><h3>Data Control</h3></div>
         <div className="card-body">
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '14px', marginBottom: '12px' }}>
-            Use AI to quickly generate avatars and communities. Provide some context to guide the generation, then import the results.
-          </p>
-          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Generate</button>
+              <label className="primary" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-primary)', color: 'white', display: 'inline-block', border: 'none' }}>
+                📥 Import from File
+                <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => { const file = e.target.files[0]; if (file) handleImport(file); e.target.value = ''; }} />
+              </label>
+              <button className="primary" onClick={handleExportAll}>📤 Export to File</button>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="danger" onClick={handleGlobalReset}>🔄 Reset Emergent Data</button>
+              <button className="danger" onClick={handleDatabaseDestroy}>💥 Destroy Database</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -206,23 +227,6 @@ function SettingsPage() {
           )}
         </div>
       </div>
-
-      {/* Global Actions */}
-      <div className="card" style={{ marginTop: '16px' }}>
-        <div className="card-header"><h3>Global Actions</h3></div>
-        <div className="card-body">
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Start</button>
-            <button className="primary" onClick={handleExportAll}>📤 Export All</button>
-            <label className="primary" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-primary-hover)', color: 'white', display: 'inline-block', border: 'none' }}>
-              📥 Import
-              <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => { const file = e.target.files[0]; if (file) handleImport(file); e.target.value = ''; }} />
-            </label>
-            <button className="danger" onClick={handleGlobalReset}>🔄 Global Reset</button>
-          </div>
-        </div>
-      </div>
-
       {/* Bulk Import Modal */}
       {showBulkImportModal && (
         <BulkImportModal
