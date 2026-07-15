@@ -219,7 +219,7 @@ function CommunityPage({ id: idProp }) {
       </div>
 
       {/* Delimiter */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: isPseudoCommunity ? 0 : '12px', margin: '24px 0 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: isPseudoCommunity ? 0 : '12px', margin: '16px 0 16px' }}>
         <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
         {!isPseudoCommunity && (
           <button

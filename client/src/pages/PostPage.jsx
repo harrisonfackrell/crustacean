@@ -107,7 +107,7 @@ function PostPage() {
       />
 
       {/* Comments */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '24px 0 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '16px 0 16px' }}>
         <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
         <span style={{ fontSize: '13px', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>💬 {post.commentCount || 0} Comment{(post.commentCount || 0) !== 1 ? 's' : ''}</span>
         <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
