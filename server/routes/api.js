@@ -289,7 +289,10 @@ router.get('/communities/:id', (req, res) => {
 
   posts = sortPosts(posts, sort);
 
-  res.json({ ...community, posts });
+  // Parse rules from JSON string to array (matching /communities/all behavior)
+  const rules = community.rules ? JSON.parse(community.rules) : [];
+
+  res.json({ ...community, rules, posts });
 });
 
 router.post('/communities', (req, res) => {

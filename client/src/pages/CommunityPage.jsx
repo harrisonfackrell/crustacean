@@ -13,6 +13,7 @@ function CommunityPage({ id: idProp }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', rules: '' });
   const [avatars, setAvatars] = useState([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [postModal, setPostModal] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const [postTitle, setPostTitle] = useState('');
@@ -116,8 +117,41 @@ function CommunityPage({ id: idProp }) {
 
   return (
     <div className="container">
-      <div className="community-header">
+      <div className="community-header" style={{ position: 'relative' }}>
         <div className="community-banner"></div>
+        {/* Three-dot menu over the banner - hidden while editing */}
+        {!isPseudoCommunity && !editing && (
+          <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 10 }}>
+            <button
+              className="secondary"
+              onClick={() => setMenuOpen(!menuOpen)}
+              style={{ fontSize: '18px', padding: '4px 10px' }}
+              aria-label="More options"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <>
+                <div className="modal-overlay" onClick={() => setMenuOpen(false)} />
+                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '240px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                  <div className="modal-body" style={{ padding: '8px 0' }}>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-around' }}>
+                      <button className="menu-item" onClick={() => { setEditing(true); setMenuOpen(false); }}>
+                        ✏️ Edit
+                      </button>
+                      <button className="menu-item" onClick={() => { handleExport(); setMenuOpen(false); }}>
+                        📤 Export
+                      </button>
+                      <button className="menu-item danger" onClick={() => { handleReset(); setMenuOpen(false); }}>
+                        🔄 Reset
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <div className="community-header-body">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -127,19 +161,6 @@ function CommunityPage({ id: idProp }) {
               <div className="community-info">
                 <div className="community-name">{'c/' + community.name}</div>
               </div>
-            </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '-4px' }}>
-              {!isPseudoCommunity && (!editing ? (
-                <button className="secondary" onClick={() => setEditing(true)}>Edit</button>
-              ) : (
-                <>
-                  <button className="primary" onClick={handleSave}>Save</button>
-                  <button className="secondary" onClick={() => setEditing(false)}>Cancel</button>
-                </>
-              ))}
-              {!isPseudoCommunity && <button className="secondary" onClick={handleExport}>📤 Export</button>}
-              {!isPseudoCommunity && <button className="danger" onClick={handleReset}>🔄 Reset</button>}
-              {!isPseudoCommunity && !editing && <button className="primary" onClick={() => { setPostModal(true); setSelectedAvatar(null); setPostTitle(''); setExtraContext(''); setLength(3); }}>📝 Post</button>}
             </div>
           </div>
 
@@ -173,21 +194,43 @@ function CommunityPage({ id: idProp }) {
               )}
             </>
           )}
+
+          {/* Sort / Edit controls - bottom-right of header, absolutely positioned to never add vertical space */}
+          <div style={{ position: 'absolute', bottom: '24px', right: '24px', display: 'flex', justifyContent: 'flex-end', gap: '4px' }}>
+            {editing ? (
+              <>
+                <button className="primary" onClick={handleSave}>Save</button>
+                <button className="secondary" onClick={() => setEditing(false)}>Cancel</button>
+              </>
+            ) : (
+              ['hot', 'new', 'top'].map(s => (
+                <button
+                  key={s}
+                  className={sort === s ? 'primary' : 'secondary'}
+                  onClick={() => setSort(s)}
+                  style={{ textTransform: 'capitalize', fontSize: '13px', padding: '6px 14px' }}
+                >
+                  {s === 'hot' ? '🔥 ' : s === 'new' ? '🕐 ' : '📈 '}{s}
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Sort Selector */}
-      <div style={{ display: 'flex', gap: '4px', margin: '16px 0' }}>
-        {['hot', 'new', 'top'].map(s => (
+      {/* Delimiter */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: isPseudoCommunity ? 0 : '12px', margin: '24px 0 16px' }}>
+        <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
+        {!isPseudoCommunity && (
           <button
-            key={s}
-            className={sort === s ? 'primary' : 'secondary'}
-            onClick={() => setSort(s)}
-            style={{ textTransform: 'capitalize', fontSize: '13px', padding: '6px 14px' }}
+            className="primary"
+            onClick={() => { setPostModal(true); setSelectedAvatar(null); setPostTitle(''); setExtraContext(''); setLength(3); }}
+            style={{ whiteSpace: 'nowrap' }}
           >
-            {s === 'hot' ? '🔥 ' : s === 'new' ? '🕐 ' : '📈 '}{s}
+            📝 Post
           </button>
-        ))}
+        )}
+        <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
       </div>
 
       {/* Posts */}
