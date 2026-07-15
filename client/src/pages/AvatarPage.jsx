@@ -8,6 +8,7 @@ function AvatarPage() {
   const [avatar, setAvatar] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [form, setForm] = useState({});
 
   useEffect(() => {
@@ -84,7 +85,40 @@ function AvatarPage() {
 
   return (
     <div className="container">
-      <div className="profile-header">
+      <div className="profile-header" style={{ position: 'relative' }}>
+        {/* Three-dot menu over the header - hidden while editing */}
+        {!editing && (
+          <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 10 }}>
+            <button
+              className="secondary"
+              onClick={() => setMenuOpen(!menuOpen)}
+              style={{ fontSize: '18px', padding: '4px 10px' }}
+              aria-label="More options"
+            >
+              ⋮
+            </button>
+            {menuOpen && (
+              <>
+                <div className="modal-overlay" onClick={() => setMenuOpen(false)} />
+                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '300px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                  <div className="modal-body" style={{ padding: '8px 8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                      <button className="primary" style={{flex: 1}} onClick={() => { setEditing(true); setMenuOpen(false); }}>
+                        ✏️ Edit
+                      </button>
+                      <button className="menu-item" style={{flex: 1}} onClick={() => { handleExport(); setMenuOpen(false); }}>
+                        📤 Export
+                      </button>
+                      <button className="menu-item danger" style={{flex: 1}} onClick={() => { handleReset(); setMenuOpen(false); }}>
+                        🔄 Reset
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div>
@@ -115,17 +149,12 @@ function AvatarPage() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {!editing ? (
-              <button className="secondary" onClick={() => setEditing(true)}>Edit</button>
-            ) : (
+            {editing && (
               <>
                 <button className="primary" onClick={handleSave}>Save</button>
                 <button className="secondary" onClick={() => setEditing(false)}>Cancel</button>
               </>
             )}
-            <button className="secondary" onClick={handleRunAutoInteract}>⚡ Run Auto-Interact</button>
-            <button className="secondary" onClick={handleExport}>📤 Export</button>
-            <button className="danger" onClick={handleReset}>🔄 Reset</button>
           </div>
         </div>
 

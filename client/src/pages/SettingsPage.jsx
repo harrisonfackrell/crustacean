@@ -140,18 +140,18 @@ function SettingsPage() {
   return (
     <div className="container">
 
-      {/* Global Actions */}
+      {/* Data Control */}
       <div className="card" style={{ marginTop: '16px' }}>
         <div className="card-header"><h3>Data Control</h3></div>
         <div className="card-body">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '8px' }}>
               <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Generate</button>
-              <label className="primary" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-primary)', color: 'white', display: 'inline-block', border: 'none' }}>
+              <label className="menu-item" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-text)', color: 'var(--color-surface)', display: 'inline-block', border: 'none' }}>
                 📥 Import from File
-                <input type="file" accept=".json" style={{ display: 'none' }} onChange={e => { const file = e.target.files[0]; if (file) handleImport(file); e.target.value = ''; }} />
+                <input type="file" accept=".json" style={{ display: 'none', fontSize: '14px' }} onChange={e => { const file = e.target.files[0]; if (file) handleImport(file); e.target.value = ''; }} />
               </label>
-              <button className="primary" onClick={handleExportAll}>📤 Export to File</button>
+              <button className="menu-item" style={{ cursor: 'pointer', background: 'var(--color-text)', color: 'var(--color-surface)' }} onClick={handleExportAll}>📤 Export to File</button>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button className="danger" onClick={handleGlobalReset}>🔄 Reset Emergent Data</button>

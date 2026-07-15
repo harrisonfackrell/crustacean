@@ -133,16 +133,16 @@ function CommunityPage({ id: idProp }) {
             {menuOpen && (
               <>
                 <div className="modal-overlay" onClick={() => setMenuOpen(false)} />
-                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '240px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
-                  <div className="modal-body" style={{ padding: '8px 0' }}>
-                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'space-around' }}>
-                      <button className="menu-item" onClick={() => { setEditing(true); setMenuOpen(false); }}>
+                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '300px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                  <div className="modal-body" style={{ padding: '8px 8px' }}>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                      <button className="primary" style={{flex: 1}} onClick={() => { setEditing(true); setMenuOpen(false); }}>
                         ✏️ Edit
                       </button>
-                      <button className="menu-item" onClick={() => { handleExport(); setMenuOpen(false); }}>
+                      <button className="menu-item" style={{flex: 1}} onClick={() => { handleExport(); setMenuOpen(false); }}>
                         📤 Export
                       </button>
-                      <button className="menu-item danger" onClick={() => { handleReset(); setMenuOpen(false); }}>
+                      <button className="menu-item danger" style={{flex: 1}} onClick={() => { handleReset(); setMenuOpen(false); }}>
                         🔄 Reset
                       </button>
                     </div>
