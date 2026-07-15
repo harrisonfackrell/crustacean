@@ -88,10 +88,7 @@ function CommunityManagePage() {
                   <Link to={`/community/${c.id}`}><strong>{'c/' + c.name}</strong></Link>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>{c.description || 'No description'}</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <Link to={`/community/${c.id}`} className="secondary">View</Link>
-                  <button className="danger" onClick={() => handleDeleteCommunity(c.id)}>Delete</button>
-                </div>
+                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteCommunity(c.id)}>🗑️</button>
               </div>
             ))
           )}

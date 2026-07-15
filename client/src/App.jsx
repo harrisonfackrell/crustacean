@@ -47,8 +47,8 @@ function App() {
           <div className="container">
             <Link to="/" className="header-logo">🦀 Crustacean</Link>
             <nav className="header-nav">
-              <Link to="/avatars">Avatars</Link>
               <Link to="/communities">Communities</Link>
+              <Link to="/avatars">Avatars</Link>
               <Link to="/settings">Settings</Link>
               <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '12px', color: autoInteractEnabled ? 'var(--color-success)' : 'var(--color-text-muted)' }}>

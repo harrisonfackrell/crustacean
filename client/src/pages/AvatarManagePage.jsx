@@ -82,10 +82,7 @@ function AvatarManagePage() {
                   </span>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' }}>{a.public_bio || 'No bio'}</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <Link to={`/avatar/${a.id}`} className="secondary">View</Link>
-                  <button className="danger" onClick={() => handleDeleteAvatar(a.id)}>Delete</button>
-                </div>
+                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteAvatar(a.id)}>🗑️</button>
               </div>
             ))
           )}
