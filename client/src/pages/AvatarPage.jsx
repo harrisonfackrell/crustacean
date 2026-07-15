@@ -161,16 +161,14 @@ function AvatarPage() {
                 <input type="number" step="0.1" min="0" max="1" value={form.reply_chance} onChange={e => setForm({ ...form, reply_chance: parseFloat(e.target.value) })} />
               </div>
             </div>
-            <div className="form-group">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={!!form.is_auto_enabled}
-                  onChange={e => setForm({ ...form, is_auto_enabled: e.target.checked ? 1 : 0 })}
-                />{' '}
-                Auto-Interact Enabled
-              </label>
-            </div>
+            <label className="form-checkbox">
+              <input
+                type="checkbox"
+                checked={!!form.is_auto_enabled}
+                onChange={e => setForm({ ...form, is_auto_enabled: e.target.checked ? 1 : 0 })}
+              />
+              Auto-Interact Enabled
+            </label>
           </div>
         ) : (
           <>

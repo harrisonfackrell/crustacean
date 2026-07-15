@@ -136,7 +136,7 @@ function SettingsPage() {
           <p style={{ color: 'var(--color-text-muted)', fontSize: '14px', marginBottom: '12px' }}>
             Use AI to quickly generate avatars and communities. Provide some context to guide the generation, then import the results.
           </p>
-          <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Start</button>
+          
         </div>
       </div>
 
@@ -212,6 +212,7 @@ function SettingsPage() {
         <div className="card-header"><h3>Global Actions</h3></div>
         <div className="card-body">
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Start</button>
             <button className="primary" onClick={handleExportAll}>📤 Export All</button>
             <label className="primary" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-primary-hover)', color: 'white', display: 'inline-block', border: 'none' }}>
               📥 Import

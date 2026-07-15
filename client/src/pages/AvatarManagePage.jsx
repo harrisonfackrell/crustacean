@@ -129,16 +129,14 @@ function AvatarManagePage() {
                   <input type="number" step="0.1" min="0" max="1" value={avatarForm.reply_chance} onChange={e => setAvatarForm({ ...avatarForm, reply_chance: parseFloat(e.target.value) })} />
                 </div>
               </div>
-              <div className="form-group">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={!!avatarForm.is_auto_enabled}
-                    onChange={e => setAvatarForm({ ...avatarForm, is_auto_enabled: e.target.checked ? 1 : 0 })}
-                  />{' '}
-                  Auto-Interact Enabled
-                </label>
-              </div>
+              <label className="form-checkbox">
+                <input
+                  type="checkbox"
+                  checked={!!avatarForm.is_auto_enabled}
+                  onChange={e => setAvatarForm({ ...avatarForm, is_auto_enabled: e.target.checked ? 1 : 0 })}
+                />
+                Auto-Interact Enabled
+              </label>
               <div className="form-actions">
                 <button className="primary" onClick={handleCreateAvatar}>Create</button>
                 <button className="secondary" onClick={() => setShowCreateAvatar(false)}>Cancel</button>

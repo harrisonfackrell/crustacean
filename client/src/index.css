@@ -505,6 +505,22 @@ textarea {
   font-weight: 500;
 }
 
+/* Checkbox - inline layout */
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.form-checkbox input[type="checkbox"] {
+  width: auto;
+  flex-shrink: 0;
+}
+
 .form-actions {
   display: flex;
   gap: 8px;

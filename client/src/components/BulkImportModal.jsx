@@ -52,16 +52,14 @@ function BulkImportModal({ onClose, onImport }) {
               style={{ width: '100%' }}
             />
           </div>
-          <div className="form-group">
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={includeExisting}
-                onChange={e => setIncludeExisting(e.target.checked)}
-              />
-              Include existing data as reference (to avoid duplicates)
-            </label>
-          </div>
+          <label className="form-checkbox">
+            <input
+              type="checkbox"
+              checked={includeExisting}
+              onChange={e => setIncludeExisting(e.target.checked)}
+            />
+            Include existing data as reference (to avoid duplicates)
+          </label>
           {error && (
             <div style={{ color: 'var(--color-danger)', fontSize: '14px', marginBottom: '12px' }}>
               {error}
