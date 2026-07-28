@@ -211,10 +211,6 @@ class AutoInteractService {
             break;
           }
         }
-        // If all comments are by this avatar, fall back to replying to the post
-        if (!replied && avatar.id !== selectedPost.avatar_id) {
-          await this.replyToPost(avatar, selectedPost, postAvatar, community, globalRules);
-        }
       } else {
         // No comments exist - reply to the post directly
         if (avatar.id !== selectedPost.avatar_id) {
@@ -238,16 +234,6 @@ class AutoInteractService {
   }
 
   async replyToPost(avatar, post, postAvatar, community, globalRules) {
-    // Check if this avatar already commented on this post (without parent_comment_id)
-    const existingComment = this.db.get(
-      'SELECT id FROM Comments WHERE avatar_id = ? AND post_id = ? AND parent_comment_id IS NULL',
-      [avatar.id, post.id]
-    );
-    if (existingComment) {
-      console.log(`Avatar ${avatar.name} already commented on post by ${postAvatar.name}`);
-      return;
-    }
-
     const context = this.buildContextForPost(avatar, community, post);
 
     try {
@@ -271,19 +257,6 @@ class AutoInteractService {
     // Select a comment to reply to (already filtered to exclude own comments)
     const selectedComment = this.selectComment(avatar, hotComments);
     if (!selectedComment) return;
-
-    // Can't reply to own comment
-    if (avatar.id === selectedComment.avatar_id) return;
-
-    // Check if this avatar already replied to this comment
-    const existingComment = this.db.get(
-      'SELECT id FROM Comments WHERE avatar_id = ? AND post_id = ? AND parent_comment_id = ?',
-      [avatar.id, post.id, selectedComment.id]
-    );
-    if (existingComment) {
-      console.log(`Avatar ${avatar.name} already replied to comment by ${selectedComment.avatar_id}`);
-      return;
-    }
 
     const commentAvatar = this.db.get('SELECT * FROM Avatars WHERE id = ?', [selectedComment.avatar_id]);
 
