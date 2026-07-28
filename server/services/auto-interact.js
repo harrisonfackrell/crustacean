@@ -141,17 +141,13 @@ class AutoInteractService {
   }
 
   decideAction(avatar, hotPosts) {
-    // Almost never post original - only when community is truly empty
+    // Probability of posting an original uses the complement of the same decay
+    // function used for comment depth selection: P(original) = exp(-decay * postCount)
+    // With decay = 0.3: ~100% when empty, ~37% at 3 posts, ~5% at 10, ~1.1% at 15
     const postCount = hotPosts.length;
-    const originalPostThreshold = 15;
-
-    if (postCount < originalPostThreshold) {
-      // When few posts exist, still mostly interact. Only 15% chance to post original.
-      return Math.random() < 0.15;
-    }
-
-    // When plenty of posts exist, almost never post original - 2% chance
-    return Math.random() < 0.02;
+    const decay = 0.3;
+    const probability = Math.exp(-decay * postCount);
+    return Math.random() < probability;
   }
 
   async createOriginalPost(avatar, community, globalRules) {
@@ -195,27 +191,11 @@ class AutoInteractService {
     }
 
     if (shouldReply) {
-      const replyComments = this.getHotComments(selectedPost.id, 20);
-
-      // Try to reply to a comment (sub-comment) first - this is the preferred path
-      // Only reply directly to the post if there are NO comments at all
-      if (replyComments.length > 0) {
-        // Try to reply to a comment - attempt up to 3 times with different comments
-        const attempts = Math.min(3, replyComments.length);
-        let replied = false;
-        for (let attempt = 0; attempt < attempts; attempt++) {
-          const selectedComment = this.selectComment(avatar, replyComments.filter(c => c.avatar_id !== avatar.id));
-          if (selectedComment) {
-            await this.replyToComment(avatar, selectedPost, [selectedComment], postAvatar, community, globalRules);
-            replied = true;
-            break;
-          }
-        }
-      } else {
-        // No comments exist - reply to the post directly
-        if (avatar.id !== selectedPost.avatar_id) {
-          await this.replyToPost(avatar, selectedPost, postAvatar, community, globalRules);
-        }
+      // Recursively select the best reply target, starting from the post.
+      // At each level, the probability of going deeper increases with child count.
+      const target = await this.selectReplyTarget(avatar, selectedPost, 'post', postAvatar, community, globalRules);
+      if (target) {
+        await this.executeReply(avatar, target, community, globalRules);
       }
     }
 
@@ -233,45 +213,113 @@ class AutoInteractService {
     return true;
   }
 
-  async replyToPost(avatar, post, postAvatar, community, globalRules) {
-    const context = this.buildContextForPost(avatar, community, post);
-
-    try {
-      const length = this.getRandomLength();
-      const content = await this.llm.generateContent('comment', avatar, postAvatar, community, globalRules, context, '', '', length);
-
-      this.db.run(
-        'INSERT INTO Comments (post_id, avatar_id, content) VALUES (?, ?, ?)',
-        [post.id, avatar.id, content]
+  /**
+   * Recursively select a reply target in the comment tree.
+   * At each level, decides whether to reply to the current node or go deeper.
+   * P(go deeper) = 1 - exp(-decay * childCount) where decay = 0.3.
+   * Returns an object { type, id, author, content, parentCommentId, post } or null.
+   */
+  async selectReplyTarget(avatar, parent, parentType, parentAuthor, community, globalRules) {
+    // Get children of the current parent
+    let children = [];
+    if (parentType === 'post') {
+      children = this.getHotComments(parent.id, 20);
+    } else {
+      // Get sub-comments of the current comment
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      children = this.db.all(
+        `SELECT c.*, a.id as avatar_id, a.name as avatar_name
+         FROM Comments c
+         JOIN Avatars a ON c.avatar_id = a.id
+         WHERE c.parent_comment_id = ? AND c.created_at >= ?
+         ORDER BY c.created_at DESC
+         LIMIT ?`,
+        [parent.id, oneDayAgo, 20]
       );
+      children = children.map(c => ({
+        ...c,
+        hotness: calculateHotness(
+          this.getUpvotes('comment', c.id),
+          this.getDownvotes('comment', c.id),
+          this.getSubCommentCount(c.id),
+          c.created_at
+        )
+      }));
+    }
 
-      console.log(`Avatar ${avatar.name} commented on post by ${postAvatar.name}`);
-    } catch (error) {
-      console.error(`Failed to create comment for ${avatar.name}:`, error.message);
+    const childCount = children.length;
+    const pGoDeeper = childCount > 0 ? 1 - Math.exp(-0.3 * childCount) : 0;
+
+    if (childCount > 0 && Math.random() < pGoDeeper) {
+      // Go deeper: select a child and recurse
+      const filtered = children.filter(c => c.avatar_id !== avatar.id);
+      if (filtered.length === 0) {
+        // All children are by the same avatar — reply to current parent instead
+        if (parentAuthor.id !== avatar.id) {
+          return {
+            type: parentType,
+            id: parent.id,
+            author: parentAuthor,
+            content: parent.content,
+            parentCommentId: parent.parent_comment_id || null,
+            post: parent
+          };
+        }
+        return null;
+      }
+      const selected = this.selectComment(avatar, filtered);
+      if (!selected) {
+        return null;
+      }
+      return await this.selectReplyTarget(avatar, selected, 'comment', selected, community, globalRules);
+    } else {
+      // Reply to the current parent
+      if (parentAuthor.id === avatar.id) {
+        return null; // Don't reply to own content
+      }
+      return {
+        type: parentType,
+        id: parent.id,
+        author: parentAuthor,
+        content: parent.content,
+        parentCommentId: parent.parent_comment_id || null,
+        post: parent
+      };
     }
   }
 
-  async replyToComment(avatar, post, hotComments, postAvatar, community, globalRules) {
-    if (hotComments.length === 0) return;
+  /**
+   * Execute a reply to the selected target.
+   */
+  async executeReply(avatar, target, community, globalRules) {
+    if (!target) return;
 
-    // Select a comment to reply to (already filtered to exclude own comments)
-    const selectedComment = this.selectComment(avatar, hotComments);
-    if (!selectedComment) return;
-
-    const commentAvatar = this.db.get('SELECT * FROM Avatars WHERE id = ?', [selectedComment.avatar_id]);
-
-    const context = this.buildContextForComment(avatar, community, post, selectedComment);
+    let context;
+    if (target.type === 'post') {
+      context = this.buildContextForPost(avatar, community, target.post);
+    } else {
+      context = this.buildContextForComment(avatar, community, target.post, target);
+    }
 
     try {
       const length = this.getRandomLength();
-      const content = await this.llm.generateContent('comment', avatar, commentAvatar, community, globalRules, context, '', '', length);
-
-      this.db.run(
-        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
-        [post.id, selectedComment.id, avatar.id, content]
+      const content = await this.llm.generateContent(
+        'comment', avatar, target.author, community, globalRules, context, '', '', length
       );
 
-      console.log(`Avatar ${avatar.name} replied to comment by ${commentAvatar.name}`);
+      if (target.parentCommentId) {
+        this.db.run(
+          'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
+          [target.post.id, target.id, avatar.id, content]
+        );
+      } else {
+        this.db.run(
+          'INSERT INTO Comments (post_id, avatar_id, content) VALUES (?, ?, ?)',
+          [target.post.id, avatar.id, content]
+        );
+      }
+
+      console.log(`Avatar ${avatar.name} replied to ${target.type} by ${target.author.name}`);
     } catch (error) {
       console.error(`Failed to create reply for ${avatar.name}:`, error.message);
     }
