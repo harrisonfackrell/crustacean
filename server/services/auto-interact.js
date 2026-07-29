@@ -1,578 +1,698 @@
 const { getDatabase } = require('../db');
-const { getLLMService } = require('./llm');
+const { getLLMService } = require('../services/llm');
 const { updateRelationship } = require('../utils/relationships');
 const { calculateHotness } = require('../utils/hotness');
 
+/**
+ * Auto-Interact Service
+ *
+ * Models Crustacean as a tree: Communities → Posts → Comments (nested).
+ * Each Avatar "browses" by performing a random walk through this tree,
+ * governed by probabilistic transition rules. During a browsing session,
+ * the Avatar votes on everything it sees and may choose to comment based
+ * on its personality settings (vote_chance, reply_chance).
+ *
+ * The service runs continuously via a tight event-loop (no intervals) when
+ * started, processing Avatars in round-robin order until stopped.
+ */
+
 class AutoInteractService {
   constructor() {
-    this.db = getDatabase();
-    this.llm = getLLMService();
-    this.isRunning = false;
-    this.timer = null;
+    this.db = null;
+    this.llm = null;
+    this.running = false;
+    this.abortFlag = false;
+    // Track which avatars have already acted on which nodes this cycle
+    // to prevent duplicate actions within a single processAvatar call
+    this.actionLog = new Map(); // avatarId -> Set of "type:id" strings
   }
 
+  getDb() {
+    if (!this.db) this.db = getDatabase();
+    return this.db;
+  }
+
+  getLLM() {
+    if (!this.llm) this.llm = getLLMService();
+    return this.llm;
+  }
+
+  /**
+   * Start the auto-interact loop.
+   * Processes enabled avatars in round-robin fashion until stop() is called.
+   */
   start() {
-    if (this.isRunning) return;
-    this.isRunning = true;
-    this.runCycle();
+    if (this.running) return;
+    this.running = true;
+    this.abortFlag = false;
+    console.log('[AutoInteract] Started');
+    this._runLoop();
   }
 
+  /**
+   * Stop the auto-interact loop.
+   */
   stop() {
-    this.isRunning = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+    console.log('[AutoInteract] Stopping...');
+    this.running = false;
+    this.abortFlag = true;
   }
 
-  async runCycle() {
-    if (!this.isRunning) return;
-
-    const autoEnabled = this.db.get('SELECT value FROM Settings WHERE key = ?', ['auto_interact_enabled']);
-    if (autoEnabled?.value !== 'true') {
-      this.scheduleNextCycle();
+  /**
+   * The main event-loop. Drives processing via setImmediate so it yields
+   * to the event loop between each avatar, avoiding blocking.
+   */
+  _runLoop() {
+    if (!this.running || this.abortFlag) {
+      console.log('[AutoInteract] Stopped');
+      this.running = false;
       return;
     }
 
-    const avatars = this.db.all(
-      'SELECT * FROM Avatars WHERE is_auto_enabled = 1 ORDER BY auto_interval ASC'
-    );
-
-    for (const avatar of avatars) {
-      if (!this.isRunning) break;
-
-      try {
-        await this.processAvatar(avatar);
-      } catch (error) {
-        console.error(`Auto-interact error for avatar ${avatar.name}:`, error.message, error.stack);
-      }
+    let db;
+    try {
+      db = this.getDb();
+    } catch (err) {
+      console.error('[AutoInteract] Failed to get database:', err.message);
+      setImmediate(() => this._runLoop());
+      return;
     }
 
-    this.scheduleNextCycle();
-  }
-
-  scheduleNextCycle() {
-    if (!this.isRunning) return;
-    // Find the minimum interval among enabled avatars
-    const minInterval = this.db.get(
-      'SELECT MIN(auto_interval) as min_interval FROM Avatars WHERE is_auto_enabled = 1'
+    const avatars = db.all(
+      'SELECT * FROM Avatars WHERE is_auto_enabled = 1'
     );
-    const intervalMs = (minInterval?.min_interval || 5) * 60 * 1000;
-    this.timer = setTimeout(() => this.runCycle(), intervalMs);
-  }
 
-  async processAvatar(avatar) {
-    // Step 1: Select a Community
-    const community = await this.selectCommunity(avatar);
-    if (!community) return;
-
-    const globalRules = this.db.all('SELECT rule FROM GlobalRules');
-
-    // Step 2: Determine how many interactions this avatar should do this cycle
-    const maxInteractions = this.getInteractionsPerCycle(avatar);
-    for (let i = 0; i < maxInteractions; i++) {
-      if (!this.isRunning) break;
-      const currentHotPosts = this.getHotPosts(community.id, 20);
-      const shouldPostOriginal = this.decideAction(avatar, currentHotPosts);
-
-      if (shouldPostOriginal) {
-        // Create an original post
-        await this.createOriginalPost(avatar, community, globalRules);
-      } else {
-        // Interact with existing content
-        await this.interactWithExisting(avatar, community, currentHotPosts, globalRules);
-      }
+    if (avatars.length === 0) {
+      // No avatars to process — keep the loop alive but yield
+      setImmediate(() => this._runLoop());
+      return;
     }
+
+    const communities = db.all('SELECT * FROM Communities');
+    if (communities.length === 0) {
+      setImmediate(() => this._runLoop());
+      return;
+    }
+
+    const globalRules = db.all('SELECT rule FROM GlobalRules').map(r => r.rule);
+
+    // Pick a random avatar to process this iteration
+    const avatar = avatars[Math.floor(Math.random() * avatars.length)];
+
+    this.actionLog.clear();
+
+    this.processAvatar(avatar, communities, globalRules)
+      .then(() => {
+        setImmediate(() => this._runLoop());
+      })
+      .catch((err) => {
+        console.error('[AutoInteract] Error processing avatar:', err.message, err.stack);
+        // Ensure the loop keeps going even on errors
+        setImmediate(() => this._runLoop());
+      });
   }
 
-  async selectCommunity(avatar) {
-    const communities = this.db.all('SELECT * FROM Communities');
-    if (communities.length === 0) return null;
+  /**
+   * Process a single avatar's browsing session.
+   * The avatar walks the tree: picks a community, may create a post,
+   * browses existing posts, votes on everything, and may comment.
+   */
+  async processAvatar(avatar, communities = null, globalRules = null) {
+    const db = this.getDb();
+    const llm = this.getLLM();
 
-    // Get or create preferences for each community
-    const preferences = [];
+    if (!communities) {
+      communities = db.all('SELECT * FROM Communities');
+    }
+    if (!globalRules) {
+      globalRules = db.all('SELECT rule FROM GlobalRules').map(r => r.rule);
+    }
+
+    // Ensure community preferences exist for all communities
     for (const community of communities) {
-      let pref = this.db.get(
-        'SELECT score FROM AvatarCommunityPreferences WHERE avatar_id = ? AND community_id = ?',
+      const pref = db.get(
+        'SELECT * FROM AvatarCommunityPreferences WHERE avatar_id = ? AND community_id = ?',
         [avatar.id, community.id]
       );
-
       if (!pref) {
-        // First time - evaluate via LLM
+        // Generate preference score via LLM
         try {
-          const score = await this.llm.generateCommunityPreference(avatar, community);
-          this.db.run(
+          const score = await llm.generateCommunityPreference(avatar, community);
+          db.run(
             'INSERT INTO AvatarCommunityPreferences (avatar_id, community_id, score) VALUES (?, ?, ?)',
             [avatar.id, community.id, score]
           );
-          pref = { score };
-        } catch (error) {
-          console.error(`Failed to generate community preference for ${avatar.name}:`, error.message);
-          pref = { score: 0 };
+        } catch {
+          db.run(
+            'INSERT INTO AvatarCommunityPreferences (avatar_id, community_id, score) VALUES (?, ?, ?)',
+            [avatar.id, community.id, 0]
+          );
+        }
+      }
+    }
+
+    // Choose a community weighted by preference score
+    const community = this._weightedCommunitySelect(avatar, communities);
+    if (!community) return;
+
+    // --- Phase 0: Maybe create a new post in this community ---
+    // ~25% chance the avatar creates a new post instead of just browsing
+    if (Math.random() < 0.25) {
+      await this._maybeCreatePost(llm, avatar, community, globalRules);
+    }
+
+    // Get posts in this community, sorted by hotness
+    const posts = this._getPostsByHotness(community.id);
+    if (posts.length === 0) return;
+
+    // Browsing session: walk through posts
+    // The avatar visits a number of posts (1 to min(3, posts.length))
+    const postsToVisit = Math.min(3, posts.length);
+    const visitedPosts = new Set();
+
+    for (let visit = 0; visit < postsToVisit && !this.abortFlag; visit++) {
+      // Choose a post — weighted toward hotness but with exploration
+      const post = this._weightedPostSelect(posts, visitedPosts);
+      if (!post) break;
+      visitedPosts.add(post.id);
+
+      // Load full comment tree for this post
+      const commentTree = this._buildCommentTree(post.id);
+
+      // Build context from what the avatar has seen this session
+      const context = this._buildSessionContext(avatar, visitedPosts, community);
+
+      // --- Phase 1: Vote on the post ---
+      await this._voteOnPost(llm, avatar, post, community, globalRules, context);
+
+      // --- Phase 2: Process all comments (vote on each, recursively) ---
+      for (const comment of commentTree) {
+        if (this.abortFlag) break;
+        await this._processCommentNode(llm, avatar, comment, post, community, globalRules, context);
+      }
+
+      // --- Phase 3: Decide whether to comment on the post (skip own posts) ---
+      if (post.avatar_id !== avatar.id && Math.random() < avatar.reply_chance) {
+        await this._maybeCommentOnPost(llm, avatar, post, community, globalRules, context);
+      }
+
+      // --- Phase 4: Decide whether to reply to any comment in the tree (skip own comments) ---
+      if (Math.random() < avatar.reply_chance) {
+        const allComments = this._flattenCommentTree(commentTree);
+        const targetComment = this._selectCommentForReply(allComments, avatar, post.id);
+        if (targetComment) {
+          await this._maybeCommentOnComment(llm, avatar, targetComment, post, community, globalRules, context);
         }
       }
 
-      preferences.push({ community, score: pref.score });
+      // --- Phase 5: Decide whether to continue browsing or switch ---
+      // ~30% chance to stop browsing this community
+      if (Math.random() < 0.3) break;
     }
+  }
 
-    // Weighted selection by |score| + epsilon
-    const epsilon = 0.1;
-    const weights = preferences.map(p => Math.abs(p.score) + epsilon);
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
+  // ============================================================
+  // Weighted Selection Helpers
+  // ============================================================
 
-    let random = Math.random() * totalWeight;
-    for (let i = 0; i < preferences.length; i++) {
-      random -= weights[i];
-      if (random <= 0) {
-        return preferences[i].community;
+  /**
+   * Select a community weighted by the avatar's preference score.
+   * Uses softmax-like weighting: exp(score / temperature) for each community.
+   */
+  _weightedCommunitySelect(avatar, communities) {
+    const db = this.getDb();
+    const temperature = 2; // Controls exploration vs exploitation
+
+    const weights = communities.map(c => {
+      const pref = db.get(
+        'SELECT score FROM AvatarCommunityPreferences WHERE avatar_id = ? AND community_id = ?',
+        [avatar.id, c.id]
+      );
+      const score = pref ? pref.score : 0;
+      return { community: c, weight: Math.exp(score / temperature) };
+    });
+
+    const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+    let r = Math.random() * totalWeight;
+
+    for (const w of weights) {
+      r -= w.weight;
+      if (r <= 0) return w.community;
+    }
+    return weights[weights.length - 1].community;
+  }
+
+  /**
+   * Select a post weighted by hotness, with some randomness for exploration.
+   * Skips posts the avatar has already visited this session.
+   */
+  _weightedPostSelect(posts, visitedPosts) {
+    const available = posts.filter(p => !visitedPosts.has(p.id));
+    if (available.length === 0) return null;
+
+    // Hotness-weighted selection with temperature.
+    // Posts with zero or very few interactions get a baseline weight
+    // so new posts are always discoverable even in established communities.
+    const temperature = 1.5;
+    const freshPostBoost = 2.0; // minimum weight for posts with low engagement
+    const weights = available.map(p => {
+      const hotnessWeight = Math.exp((p.hotness || 0) / temperature);
+      // Give posts with no/low engagement a guaranteed floor
+      const engagement = (p.upvotes || 0) + (p.commentCount || 0);
+      const weight = engagement < 3 ? Math.max(hotnessWeight, freshPostBoost) : hotnessWeight;
+      return { post: p, weight };
+    });
+
+    const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+    let r = Math.random() * totalWeight;
+
+    for (const w of weights) {
+      r -= w.weight;
+      if (r <= 0) return w.post;
+    }
+    return weights[weights.length - 1].post;
+  }
+
+  /**
+   * Select a comment to potentially reply to, preferring comments with
+   * high engagement and comments the avatar has a positive relationship with.
+   * Works with a flat list of all comments (any depth) from _flattenCommentTree.
+   */
+  _selectCommentForReply(comments, avatar, postId) {
+    if (comments.length === 0) return null;
+    const db = this.getDb();
+
+    // Filter out: own comments, already-replied-to comments
+    const available = comments.filter(c => {
+      // Skip own comments
+      if (c.avatar_id === avatar.id) return false;
+      // Skip if already replied to this comment
+      const alreadyReplied = db.get(
+        'SELECT id FROM Comments WHERE avatar_id = ? AND post_id = ? AND parent_comment_id = ?',
+        [avatar.id, postId, c.id]
+      );
+      return !alreadyReplied;
+    });
+
+    if (available.length === 0) return null;
+
+    // Weight by: relationship with author + comment score
+    const weights = available.map(c => {
+      const rel = db.get(
+        'SELECT score FROM AvatarRelationships WHERE actor_id = ? AND target_id = ?',
+        [avatar.id, c.avatar_id]
+      );
+      const relScore = rel ? rel.score : 0;
+      // Prefer replying to people we like and to higher-scoring comments
+      const weight = Math.max(0, relScore) * 0.4 + (c.score || 0) * 0.3 + 1;
+      return { comment: c, weight };
+    });
+
+    const totalWeight = weights.reduce((sum, w) => sum + w.weight, 0);
+    let r = Math.random() * totalWeight;
+
+    for (const w of weights) {
+      r -= w.weight;
+      if (r <= 0) return w.comment;
+    }
+    return weights[weights.length - 1].comment;
+  }
+
+  // ============================================================
+  // Data Loading Helpers
+  // ============================================================
+
+  /**
+   * Get posts in a community sorted by hotness.
+   */
+  _getPostsByHotness(communityId) {
+    const db = this.getDb();
+    const posts = db.all(
+      'SELECT * FROM Posts WHERE community_id = ? ORDER BY created_at DESC',
+      [communityId]
+    ).map(post => {
+      const upvotes = this._getVoteCount('post', post.id, 1);
+      const downvotes = this._getVoteCount('post', post.id, -1);
+      const commentCount = this._getCommentCount(post.id);
+      return {
+        ...post,
+        upvotes,
+        downvotes,
+        commentCount,
+        hotness: calculateHotness(upvotes, downvotes, commentCount, post.created_at)
+      };
+    });
+
+    return posts.sort((a, b) => b.hotness - a.hotness);
+  }
+
+  /**
+   * Build the top-level comment tree for a post.
+   * Returns flat array of top-level comments, each with nested replies.
+   */
+  _buildCommentTree(postId) {
+    const db = this.getDb();
+    const comments = db.all(
+      'SELECT * FROM Comments WHERE post_id = ? ORDER BY created_at ASC',
+      [postId]
+    );
+
+    const map = {};
+    const topLevel = [];
+
+    comments.forEach(c => {
+      const upvotes = this._getVoteCount('comment', c.id, 1);
+      const downvotes = this._getVoteCount('comment', c.id, -1);
+      const enriched = {
+        ...c,
+        upvotes,
+        downvotes,
+        score: upvotes - downvotes,
+        avatar: db.get('SELECT id, name, handle, public_bio FROM Avatars WHERE id = ?', [c.avatar_id]),
+        replies: []
+      };
+      map[c.id] = enriched;
+    });
+
+    comments.forEach(c => {
+      const node = map[c.id];
+      if (c.parent_comment_id && map[c.parent_comment_id]) {
+        map[c.parent_comment_id].replies.push(node);
+      } else {
+        topLevel.push(node);
+      }
+    });
+
+    return topLevel;
+  }
+
+  // ============================================================
+  // Context Building
+  // ============================================================
+
+  /**
+   * Build context string from the avatar's browsing session.
+   * Includes the content of posts and comments the avatar has seen.
+   * This gives the LLM a realistic "what this user has been reading" context.
+   */
+  _buildSessionContext(avatar, visitedPostIds, community) {
+    const db = this.getDb();
+    let context = `You are browsing r/${community.name}.\n`;
+    context += `Community description: ${community.description || 'No description.'}\n`;
+
+    for (const postId of visitedPostIds) {
+      const post = db.get('SELECT * FROM Posts WHERE id = ?', [postId]);
+      if (!post) continue;
+
+      const postAvatar = db.get('SELECT name, handle FROM Avatars WHERE id = ?', [post.avatar_id]);
+      context += `\n--- Post by ${postAvatar?.name} (@${postAvatar?.handle}) ---\n`;
+      if (post.title) context += `Title: ${post.title}\n`;
+      context += `Content: ${post.content}\n`;
+
+      // Include top-level comments as context
+      const comments = db.all(
+        'SELECT c.*, a.name, a.handle FROM Comments c JOIN Avatars a ON c.avatar_id = a.id WHERE c.post_id = ? AND c.parent_comment_id IS NULL ORDER BY c.created_at ASC',
+        [postId]
+      ).slice(0, 5); // Limit to 5 top-level comments to keep context manageable
+
+      if (comments.length > 0) {
+        context += `Comments:\n`;
+        for (const c of comments) {
+          context += `  - ${c.name} (@${c.handle}): ${c.content}\n`;
+        }
       }
     }
 
-    return preferences[preferences.length - 1].community;
+    return context;
   }
 
-  getInteractionsPerCycle(avatar) {
-    // Each avatar does 2-5 interactions per cycle based on their settings
-    let base = 2 + Math.floor(Math.random() * 3); // 2-4
-    // Higher reply_chance and vote_chance avatars tend to do more
-    if (Math.random() < avatar.reply_chance * 0.5) base++;
-    if (Math.random() < avatar.vote_chance * 0.3) base++;
-    return Math.min(base, 6); // Cap at 6
-  }
+  // ============================================================
+  // Action Methods
+  // ============================================================
 
-  decideAction(avatar, hotPosts) {
-    // Probability of posting an original uses the complement of the same decay
-    // function used for comment depth selection: P(original) = exp(-decay * postCount)
-    // With decay = 0.3: ~100% when empty, ~37% at 3 posts, ~5% at 10, ~1.1% at 15
-    const postCount = hotPosts.length;
-    const decay = 0.3;
-    const probability = Math.exp(-decay * postCount);
-    return Math.random() < probability;
-  }
+  /**
+   * Vote on a post. Always votes on everything the avatar sees.
+   */
+  async _voteOnPost(llm, avatar, post, community, globalRules, context) {
+    const db = this.getDb();
+    const actionKey = `post:${post.id}`;
 
-  async createOriginalPost(avatar, community, globalRules) {
-    const context = this.buildContextForPost(avatar, community, null);
+    if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
+      return; // Already voted this session
+    }
+
+    // Check if already voted
+    const existing = db.get(
+      'SELECT * FROM Votes WHERE avatar_id = ? AND target_type = ? AND target_id = ?',
+      [avatar.id, 'post', post.id]
+    );
+    if (existing) return;
+
+    // Only vote if avatar's vote_chance allows it
+    if (Math.random() >= avatar.vote_chance) return;
 
     try {
-      const length = this.getRandomLength();
-      const result = await this.llm.generateContent('post', avatar, null, community, globalRules, context, '', '', length);
+      const text = post.title ? `${post.title}\n${post.content}` : post.content;
+      const voteValue = await llm.generateVote(avatar, text);
 
-      // LLM returns { title, content } when no title is provided
-      const title = (typeof result === 'object' && result.title) ? result.title : '';
-      const content = (typeof result === 'object' && result.content) ? result.content : result;
+      db.run(
+        'INSERT INTO Votes (avatar_id, target_type, target_id, vote_value) VALUES (?, ?, ?, ?)',
+        [avatar.id, 'post', post.id, voteValue]
+      );
 
-      this.db.run(
+      // Update relationship with post author
+      updateRelationship(db, avatar.id, post.avatar_id, voteValue);
+
+      this._logAction(avatar.id, actionKey);
+    } catch (err) {
+      console.error(`[AutoInteract] Vote on post ${post.id} failed:`, err.message);
+    }
+  }
+
+  /**
+   * Recursively process a comment node: vote on it, then process its replies.
+   */
+  async _processCommentNode(llm, avatar, comment, post, community, globalRules, context) {
+    const db = this.getDb();
+    const actionKey = `comment:${comment.id}`;
+
+    if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
+      // Still process children even if we already acted on this node
+      for (const reply of comment.replies || []) {
+        await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context);
+      }
+      return;
+    }
+
+    // Vote on this comment
+    const existingVote = db.get(
+      'SELECT * FROM Votes WHERE avatar_id = ? AND target_type = ? AND target_id = ?',
+      [avatar.id, 'comment', comment.id]
+    );
+
+    if (!existingVote && Math.random() < avatar.vote_chance) {
+      try {
+        const voteValue = await llm.generateVote(avatar, comment.content);
+        db.run(
+          'INSERT INTO Votes (avatar_id, target_type, target_id, vote_value) VALUES (?, ?, ?, ?)',
+          [avatar.id, 'comment', comment.id, voteValue]
+        );
+        updateRelationship(db, avatar.id, comment.avatar_id, voteValue);
+        this._logAction(avatar.id, actionKey);
+      } catch (err) {
+        console.error(`[AutoInteract] Vote on comment ${comment.id} failed:`, err.message);
+      }
+    }
+
+    // Process replies
+    for (const reply of comment.replies || []) {
+      await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context);
+    }
+  }
+
+  /**
+   * Maybe create a new post in a community.
+   */
+  async _maybeCreatePost(llm, avatar, community, globalRules) {
+    const db = this.getDb();
+
+    try {
+      const result = await llm.generateContent(
+        'post',
+        avatar,
+        null,
+        community,
+        globalRules,
+        `You are in the community r/${community.name}.`,
+        '',
+        '',
+        avatar.auto_interval || 3
+      );
+
+      // result is { title, content } from generateContent for posts
+      const title = result.title || '';
+      const content = result.content || result;
+
+      db.run(
         'INSERT INTO Posts (community_id, avatar_id, title, content) VALUES (?, ?, ?, ?)',
         [community.id, avatar.id, title, content]
       );
 
-      console.log(`Avatar ${avatar.name} created a post in ${community.name}`);
-    } catch (error) {
-      console.error(`Failed to create post for ${avatar.name}:`, error.message);
-    }
-  }
-
-  async interactWithExisting(avatar, community, hotPosts, globalRules) {
-    if (hotPosts.length === 0) return false;
-
-    // Select a post to interact with
-    const selectedPost = this.selectPost(avatar, hotPosts);
-    if (!selectedPost) return false;
-
-    const postAvatar = this.db.get('SELECT * FROM Avatars WHERE id = ?', [selectedPost.avatar_id]);
-
-    // Always vote on the post
-    const shouldVote = Math.random() < Math.max(avatar.vote_chance, 0.8);
-    // Very high chance to comment/reply
-    const shouldReply = Math.random() < Math.max(avatar.reply_chance, 0.9);
-
-    if (shouldVote) {
-      await this.voteOnContent(avatar, 'post', selectedPost.id, selectedPost.content);
-    }
-
-    if (shouldReply) {
-      // Recursively select the best reply target, starting from the post.
-      // At each level, the probability of going deeper increases with child count.
-      const target = await this.selectReplyTarget(avatar, selectedPost, 'post', postAvatar, community, globalRules);
-      if (target) {
-        await this.executeReply(avatar, target, community, globalRules);
-      }
-    }
-
-    // Vote on some comments in this post
-    const voteComments = this.getHotComments(selectedPost.id, 20);
-    if (voteComments.length > 0 && Math.random() < 0.7) {
-      const commentsToVote = Math.min(voteComments.length, Math.floor(Math.random() * 3) + 1);
-      const shuffled = [...voteComments].sort(() => Math.random() - 0.5);
-      for (let j = 0; j < commentsToVote; j++) {
-        const comment = shuffled[j];
-        await this.voteOnContent(avatar, 'comment', comment.id, comment.content);
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Recursively select a reply target in the comment tree.
-   * At each level, decides whether to reply to the current node or go deeper.
-   * P(go deeper) = 1 - exp(-decay * childCount) where decay = 0.3.
-   * Returns an object { type, id, author, content, parentCommentId, post } or null.
-   */
-  async selectReplyTarget(avatar, parent, parentType, parentAuthor, community, globalRules) {
-    // Get children of the current parent
-    let children = [];
-    if (parentType === 'post') {
-      children = this.getHotComments(parent.id, 20);
-    } else {
-      // Get sub-comments of the current comment
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      children = this.db.all(
-        `SELECT c.*, a.id as avatar_id, a.name as avatar_name
-         FROM Comments c
-         JOIN Avatars a ON c.avatar_id = a.id
-         WHERE c.parent_comment_id = ? AND c.created_at >= ?
-         ORDER BY c.created_at DESC
-         LIMIT ?`,
-        [parent.id, oneDayAgo, 20]
-      );
-      children = children.map(c => ({
-        ...c,
-        hotness: calculateHotness(
-          this.getUpvotes('comment', c.id),
-          this.getDownvotes('comment', c.id),
-          this.getSubCommentCount(c.id),
-          c.created_at
-        )
-      }));
-    }
-
-    const childCount = children.length;
-    const pGoDeeper = childCount > 0 ? 1 - Math.exp(-0.3 * childCount) : 0;
-
-    if (childCount > 0 && Math.random() < pGoDeeper) {
-      // Go deeper: select a child and recurse
-      const filtered = children.filter(c => c.avatar_id !== avatar.id);
-      if (filtered.length === 0) {
-        // All children are by the same avatar — reply to current parent instead
-        if (parentAuthor.id !== avatar.id) {
-          return {
-            type: parentType,
-            id: parent.id,
-            author: parentAuthor,
-            content: parent.content,
-            parentCommentId: parent.parent_comment_id || null,
-            post: parent
-          };
-        }
-        return null;
-      }
-      const selected = this.selectComment(avatar, filtered);
-      if (!selected) {
-        return null;
-      }
-      return await this.selectReplyTarget(avatar, selected, 'comment', selected, community, globalRules);
-    } else {
-      // Reply to the current parent
-      if (parentAuthor.id === avatar.id) {
-        return null; // Don't reply to own content
-      }
-      return {
-        type: parentType,
-        id: parent.id,
-        author: parentAuthor,
-        content: parent.content,
-        parentCommentId: parent.parent_comment_id || null,
-        post: parent
-      };
+      this._logAction(avatar.id, `create_post:${community.id}`);
+    } catch (err) {
+      console.error(`[AutoInteract] Create post in community ${community.id} failed:`, err.message);
     }
   }
 
   /**
-   * Execute a reply to the selected target.
+   * Maybe comment on a post (top-level comment).
    */
-  async executeReply(avatar, target, community, globalRules) {
-    if (!target) return;
+  async _maybeCommentOnPost(llm, avatar, post, community, globalRules, context) {
+    const db = this.getDb();
+    const actionKey = `comment_on_post:${post.id}`;
 
-    let context;
-    if (target.type === 'post') {
-      context = this.buildContextForPost(avatar, community, target.post);
-    } else {
-      context = this.buildContextForComment(avatar, community, target.post, target);
+    if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
+      return;
     }
+
+    // Skip own posts
+    if (post.avatar_id === avatar.id) return;
+
+    // Check if already commented on this post
+    const existing = db.get(
+      'SELECT id FROM Comments WHERE avatar_id = ? AND post_id = ? AND parent_comment_id IS NULL',
+      [avatar.id, post.id]
+    );
+    if (existing) return;
 
     try {
-      const length = this.getRandomLength();
-      const content = await this.llm.generateContent(
-        'comment', avatar, target.author, community, globalRules, context, '', '', length
+      const targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
+      const content = await llm.generateContent(
+        'comment',
+        avatar,
+        targetAvatar,
+        community,
+        globalRules,
+        context,
+        '',
+        '',
+        avatar.auto_interval || 3
       );
 
-      if (target.parentCommentId) {
-        this.db.run(
-          'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
-          [target.post.id, target.id, avatar.id, content]
-        );
-      } else {
-        this.db.run(
-          'INSERT INTO Comments (post_id, avatar_id, content) VALUES (?, ?, ?)',
-          [target.post.id, avatar.id, content]
-        );
-      }
+      db.run(
+        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
+        [post.id, null, avatar.id, content]
+      );
 
-      console.log(`Avatar ${avatar.name} replied to ${target.type} by ${target.author.name}`);
-    } catch (error) {
-      console.error(`Failed to create reply for ${avatar.name}:`, error.message);
+      this._logAction(avatar.id, actionKey);
+    } catch (err) {
+      if (err.message.includes('Avatar has already replied')) {
+        return; // Already commented
+      }
+      console.error(`[AutoInteract] Comment on post ${post.id} failed:`, err.message);
     }
   }
 
-  async voteOnContent(avatar, targetType, targetId, targetText) {
+  /**
+   * Maybe comment on a specific comment (reply).
+   */
+  async _maybeCommentOnComment(llm, avatar, comment, post, community, globalRules, context) {
+    const db = this.getDb();
+    const actionKey = `reply_to_comment:${comment.id}`;
+
+    if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
+      return;
+    }
+
+    // Skip own comments
+    if (comment.avatar_id === avatar.id) return;
+
+    // Check if already replied to this comment
+    const existing = db.get(
+      'SELECT id FROM Comments WHERE avatar_id = ? AND post_id = ? AND parent_comment_id = ?',
+      [avatar.id, post.id, comment.id]
+    );
+    if (existing) return;
+
     try {
-      const voteValue = await this.llm.generateVote(avatar, targetText);
-
-      // Check if a vote already exists for this avatar on this target
-      const existingVote = this.db.get(
-        'SELECT id, vote_value FROM Votes WHERE avatar_id = ? AND target_type = ? AND target_id = ?',
-        [avatar.id, targetType, targetId]
+      const targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [comment.avatar_id]);
+      const content = await llm.generateContent(
+        'comment',
+        avatar,
+        targetAvatar,
+        community,
+        globalRules,
+        context,
+        '',
+        '',
+        avatar.auto_interval || 3
       );
 
-      if (existingVote) {
-        // Skip if the vote value is the same
-        if (existingVote.vote_value === voteValue) {
-          console.log(`Avatar ${avatar.name} already voted ${voteValue > 0 ? 'up' : 'down'} on ${targetType} ${targetId}`);
-          return;
-        }
-        // Update existing vote
-        this.db.run(
-          'UPDATE Votes SET vote_value = ? WHERE id = ?',
-          [voteValue, existingVote.id]
-        );
-      } else {
-        // Insert new vote
-        this.db.run(
-          'INSERT INTO Votes (avatar_id, target_type, target_id, vote_value) VALUES (?, ?, ?, ?)',
-          [avatar.id, targetType, targetId, voteValue]
-        );
-      }
+      db.run(
+        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
+        [post.id, comment.id, avatar.id, content]
+      );
 
-      // Update relationships
-      if (targetType === 'post') {
-        const post = this.db.get('SELECT avatar_id FROM Posts WHERE id = ?', [targetId]);
-        if (post) {
-          updateRelationship(this.db, avatar.id, post.avatar_id, voteValue);
-        }
-      } else {
-        const comment = this.db.get('SELECT avatar_id FROM Comments WHERE id = ?', [targetId]);
-        if (comment) {
-          updateRelationship(this.db, avatar.id, comment.avatar_id, voteValue);
-        }
+      this._logAction(avatar.id, actionKey);
+    } catch (err) {
+      if (err.message.includes('Avatar has already replied')) {
+        return; // Already replied
       }
-
-      console.log(`Avatar ${avatar.name} voted ${voteValue > 0 ? 'up' : 'down'} on ${targetType} ${targetId}`);
-    } catch (error) {
-      console.error(`Failed to vote for ${avatar.name}:`, error.message);
+      console.error(`[AutoInteract] Reply to comment ${comment.id} failed:`, err.message);
     }
   }
 
-  selectPost(avatar, hotPosts) {
-    if (hotPosts.length === 0) return null;
+  // ============================================================
+  // Utility Methods
+  // ============================================================
 
-    const weights = hotPosts.map(post => {
-      let weight = post.hotness || 1;
-
-      // Influence by relationship with the post's author
-      const rel = this.db.get(
-        'SELECT score FROM AvatarRelationships WHERE actor_id = ? AND target_id = ?',
-        [avatar.id, post.avatar_id]
-      );
-
-      if (rel) {
-        weight += Math.abs(rel.score) * 0.5;
-      }
-
-      return Math.max(weight, 0.1); // Floor
-    });
-
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    let random = Math.random() * totalWeight;
-
-    for (let i = 0; i < hotPosts.length; i++) {
-      random -= weights[i];
-      if (random <= 0) {
-        return hotPosts[i];
-      }
-    }
-
-    return hotPosts[hotPosts.length - 1];
-  }
-
-  selectComment(avatar, hotComments) {
-    if (hotComments.length === 0) return null;
-
-    const weights = hotComments.map(comment => {
-      let weight = comment.hotness || 1;
-
-      // Influence by relationship with the comment's author
-      const rel = this.db.get(
-        'SELECT score FROM AvatarRelationships WHERE actor_id = ? AND target_id = ?',
-        [avatar.id, comment.avatar_id]
-      );
-
-      if (rel) {
-        weight += Math.abs(rel.score) * 0.5;
-      }
-
-      return Math.max(weight, 0.1);
-    });
-
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    let random = Math.random() * totalWeight;
-
-    for (let i = 0; i < hotComments.length; i++) {
-      random -= weights[i];
-      if (random <= 0) {
-        return hotComments[i];
-      }
-    }
-
-    return hotComments[hotComments.length - 1];
-  }
-
-  getHotPosts(communityId, limit = 20) {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const posts = this.db.all(
-      `SELECT p.*, a.id as avatar_id, a.name as avatar_name
-       FROM Posts p
-       JOIN Avatars a ON p.avatar_id = a.id
-       WHERE p.community_id = ? AND p.created_at >= ?
-       ORDER BY p.created_at DESC
-       LIMIT ?`,
-      [communityId, oneDayAgo, limit * 2] // Get more to sort by hotness
-    );
-
-    return posts.map(post => ({
-      ...post,
-      hotness: calculateHotness(
-        this.getUpvotes('post', post.id),
-        this.getDownvotes('post', post.id),
-        this.getCommentCount(post.id),
-        post.created_at
-      )
-    }))
-    .sort((a, b) => b.hotness - a.hotness)
-    .slice(0, limit);
-  }
-
-  getHotComments(postId, limit = 20) {
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const comments = this.db.all(
-      `SELECT c.*, a.id as avatar_id, a.name as avatar_name
-       FROM Comments c
-       JOIN Avatars a ON c.avatar_id = a.id
-       WHERE c.post_id = ? AND c.created_at >= ?
-       ORDER BY c.created_at DESC
-       LIMIT ?`,
-      [postId, oneDayAgo, limit * 2]
-    );
-
-    return comments.map(comment => ({
-      ...comment,
-      hotness: calculateHotness(
-        this.getUpvotes('comment', comment.id),
-        this.getDownvotes('comment', comment.id),
-        this.getSubCommentCount(comment.id),
-        comment.created_at
-      )
-    }))
-    .sort((a, b) => b.hotness - a.hotness)
-    .slice(0, limit);
-  }
-
-  getUpvotes(targetType, targetId) {
-    const result = this.db.get(
-      'SELECT COUNT(*) as count FROM Votes WHERE target_type = ? AND target_id = ? AND vote_value = 1',
-      [targetType, targetId]
+  /**
+   * Get vote count for a target.
+   */
+  _getVoteCount(targetType, targetId, voteValue) {
+    const db = this.getDb();
+    const result = db.get(
+      'SELECT COUNT(*) as count FROM Votes WHERE target_type = ? AND target_id = ? AND vote_value = ?',
+      [targetType, targetId, voteValue]
     );
     return result?.count || 0;
   }
 
-  getDownvotes(targetType, targetId) {
-    const result = this.db.get(
-      'SELECT COUNT(*) as count FROM Votes WHERE target_type = ? AND target_id = ? AND vote_value = -1',
-      [targetType, targetId]
-    );
-    return result?.count || 0;
-  }
-
-  getCommentCount(postId) {
-    const result = this.db.get(
+  /**
+   * Get comment count for a post.
+   */
+  _getCommentCount(postId) {
+    const db = this.getDb();
+    const result = db.get(
       'SELECT COUNT(*) as count FROM Comments WHERE post_id = ?',
       [postId]
     );
     return result?.count || 0;
   }
 
-  getSubCommentCount(commentId) {
-    const result = this.db.get(
-      'SELECT COUNT(*) as count FROM Comments WHERE parent_comment_id = ?',
-      [commentId]
-    );
-    return result?.count || 0;
-  }
-
-  buildContextForPost(avatar, community, post) {
-    let context = `Community: ${community.name}\n`;
-
-    if (post) {
-      context += `Post by ${post.avatar_name}: ${post.content}\n`;
+  /**
+   * Flatten a nested comment tree into a flat array of all comments.
+   * Each comment retains its depth and score for weighted selection.
+   */
+  _flattenCommentTree(tree, depth = 0) {
+    const flat = [];
+    for (const node of tree) {
+      flat.push({ ...node, depth });
+      if (node.replies && node.replies.length > 0) {
+        flat.push(...this._flattenCommentTree(node.replies, depth + 1));
+      }
     }
-
-    // Add some history from the avatar's posting history
-    const avatarPosts = this.db.all(
-      'SELECT content FROM Posts WHERE avatar_id = ? ORDER BY created_at DESC LIMIT 3',
-      [avatar.id]
-    );
-    if (avatarPosts.length > 0) {
-      context += `\nYour recent posts:\n${avatarPosts.map(p => `- ${p.content}`).join('\n')}\n`;
-    }
-
-    return context;
-  }
-
-  buildContextForComment(avatar, community, post, comment) {
-    let context = `Community: ${community.name}\n`;
-    context += `Post: ${post.content}\n`;
-    context += `Comment by ${comment.avatar_name}: ${comment.content}\n`;
-
-    return context;
+    return flat;
   }
 
   /**
-   * Generate a random length value (1-10) biased toward 3.
-   * Shorter results are more common, longer results are rarer.
-   * Uses inverse distance weighting from the mode (3).
+   * Log an action for this avatar to prevent duplicates within a session.
    */
-  getRandomLength() {
-    const weights = [];
-    for (let i = 1; i <= 10; i++) {
-      // Weight is inversely proportional to distance from 3
-      // Use 1/(distance + 1) to avoid division by zero and give mode highest weight
-      const distance = Math.abs(i - 3);
-      weights.push(1 / (distance + 1));
+  _logAction(avatarId, actionKey) {
+    if (!this.actionLog.has(avatarId)) {
+      this.actionLog.set(avatarId, new Set());
     }
-    // Normalize weights
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    const normalizedWeights = weights.map(w => w / totalWeight);
-
-    // Weighted random selection
-    let random = Math.random();
-    for (let i = 0; i < normalizedWeights.length; i++) {
-      random -= normalizedWeights[i];
-      if (random <= 0) {
-        return i + 1;
-      }
-    }
-
-    return 10; // Fallback
+    this.actionLog.get(avatarId).add(actionKey);
   }
 }
 
