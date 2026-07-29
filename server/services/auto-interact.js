@@ -9,8 +9,8 @@ const { calculateHotness } = require('../utils/hotness');
  * Models Crustacean as a tree: Communities → Posts → Comments (nested).
  * Each Avatar "browses" by performing a random walk through this tree,
  * governed by probabilistic transition rules. During a browsing session,
- * the Avatar votes on everything it sees and may choose to comment based
- * on its personality settings (vote_chance, reply_chance).
+ * the Avatar always votes on everything it sees and comments when conditions
+ * are met (not on its own content).
  *
  * The service runs continuously via a tight event-loop (no intervals) when
  * started, processing Avatars in round-robin order until stopped.
@@ -78,9 +78,7 @@ class AutoInteractService {
       return;
     }
 
-    const avatars = db.all(
-      'SELECT * FROM Avatars WHERE is_auto_enabled = 1'
-    );
+    const avatars = db.all('SELECT * FROM Avatars');
 
     if (avatars.length === 0) {
       // No avatars to process — keep the loop alive but yield
@@ -191,13 +189,13 @@ class AutoInteractService {
         await this._processCommentNode(llm, avatar, comment, post, community, globalRules, context);
       }
 
-      // --- Phase 3: Decide whether to comment on the post (skip own posts) ---
-      if (post.avatar_id !== avatar.id && Math.random() < avatar.reply_chance) {
+      // --- Phase 3: Comment on the post (skip own posts) ---
+      if (post.avatar_id !== avatar.id) {
         await this._maybeCommentOnPost(llm, avatar, post, community, globalRules, context);
       }
 
-      // --- Phase 4: Decide whether to reply to any comment in the tree (skip own comments) ---
-      if (Math.random() < avatar.reply_chance) {
+      // --- Phase 4: Reply to a comment in the tree (skip own comments) ---
+      {
         const allComments = this._flattenCommentTree(commentTree);
         const targetComment = this._selectCommentForReply(allComments, avatar, post.id);
         if (targetComment) {
@@ -448,9 +446,6 @@ class AutoInteractService {
     );
     if (existing) return;
 
-    // Only vote if avatar's vote_chance allows it
-    if (Math.random() >= avatar.vote_chance) return;
-
     try {
       const text = post.title ? `${post.title}\n${post.content}` : post.content;
       const voteValue = await llm.generateVote(avatar, text);
@@ -484,13 +479,13 @@ class AutoInteractService {
       return;
     }
 
-    // Vote on this comment
+    // Vote on this comment (always vote)
     const existingVote = db.get(
       'SELECT * FROM Votes WHERE avatar_id = ? AND target_type = ? AND target_id = ?',
       [avatar.id, 'comment', comment.id]
     );
 
-    if (!existingVote && Math.random() < avatar.vote_chance) {
+    if (!existingVote) {
       try {
         const voteValue = await llm.generateVote(avatar, comment.content);
         db.run(
@@ -526,7 +521,7 @@ class AutoInteractService {
         `You are in the community r/${community.name}.`,
         '',
         '',
-        avatar.auto_interval || 3
+        this._randomLength()
       );
 
       // result is { title, content } from generateContent for posts
@@ -576,7 +571,7 @@ class AutoInteractService {
         context,
         '',
         '',
-        avatar.auto_interval || 3
+        this._randomLength()
       );
 
       db.run(
@@ -625,7 +620,7 @@ class AutoInteractService {
         context,
         '',
         '',
-        avatar.auto_interval || 3
+        this._randomLength()
       );
 
       db.run(
@@ -693,6 +688,37 @@ class AutoInteractService {
       this.actionLog.set(avatarId, new Set());
     }
     this.actionLog.get(avatarId).add(actionKey);
+  }
+  
+  /**
+   * Generate a random comment length (1-10) following a distribution centered around 3.
+   * Most posts will be length 3, with values divergent from that growing rarer.
+   * Uses inverse probability weighting: higher weights for lengths near 3.
+   */
+  _randomLength() {
+    // Weights heavily favoring length 3, tapering off symmetrically
+    const weights = [
+      0.02,  // length 1 - very rare
+      0.05,  // length 2 - uncommon
+      0.40,  // length 3 - most common (center)
+      0.25,  // length 4 - moderate
+      0.12,  // length 5 - less common
+      0.06,  // length 6 - rare
+      0.03,  // length 7 - very rare
+      0.02,  // length 8 - extremely rare
+      0.02,  // length 9 - extremely rare
+      0.01   // length 10 - almost never
+    ];
+  
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    let r = Math.random() * totalWeight;
+  
+    for (let i = 0; i < weights.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return i + 1; // Convert 0-index to 1-10 length
+    }
+  
+    return weights.length; // Fallback to max length
   }
 }
 

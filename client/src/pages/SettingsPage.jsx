@@ -238,9 +238,6 @@ function SettingsPage() {
                 {modelsError}
               </small>
             )}
-            <small style={{ display: 'block', marginTop: '4px', opacity: 0.7 }}>
-              Select a model from the list, or type a custom model name below if it's not listed.
-            </small>
           </div>
           <div className="form-group">
             <label>Custom Model (fallback — used if different from dropdown selection)</label>

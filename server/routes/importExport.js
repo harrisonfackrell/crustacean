@@ -37,13 +37,13 @@ router.post('/import', (req, res) => {
   for (const item of items) {
     try {
       if (item.type === 'avatar') {
-        const { name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled } = item.data;
+        const { name, handle, private_bio, public_bio } = item.data;
         // Sanitize handle during import: remove spaces and special characters silently
         const sanitizedHandle = sanitizeAvatarHandle(handle);
         try {
           getDb().run(
-            'INSERT OR IGNORE INTO Avatars (name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            [name, sanitizedHandle, private_bio || '', public_bio || '', auto_interval || 5, vote_chance || 0.5, reply_chance || 0.5, is_auto_enabled !== undefined ? is_auto_enabled : 1]
+            'INSERT OR IGNORE INTO Avatars (name, handle, private_bio, public_bio) VALUES (?, ?, ?, ?)',
+            [name, sanitizedHandle, private_bio || '', public_bio || '']
           );
           // Check if the row was actually inserted (lastInsertRowid returns 0 on IGNORE)
           const id = getDb().lastInsertRowid();
@@ -78,7 +78,7 @@ router.post('/import', (req, res) => {
 });
 
 router.get('/export/all', (req, res) => {
-  const avatars = getDb().all('SELECT name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled FROM Avatars');
+  const avatars = getDb().all('SELECT name, handle, private_bio, public_bio FROM Avatars');
   const communities = getDb().all('SELECT name, description, rules FROM Communities');
   const globalRules = getDb().all('SELECT rule FROM GlobalRules');
 

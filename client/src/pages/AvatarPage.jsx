@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import PostCard from '../components/PostCard';
 
+const MAX_CONTENT_LENGTH = 200; // Characters before truncation
+
 function AvatarPage() {
   const { id } = useParams();
   const [avatar, setAvatar] = useState(null);
@@ -11,6 +13,7 @@ function AvatarPage() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [form, setForm] = useState({});
   const [historyTab, setHistoryTab] = useState('all'); // 'posts' | 'comments' | 'all'
+  const [expandedItems, setExpandedItems] = useState({}); // Track expanded history items
 
   useEffect(() => {
     loadAvatar();
@@ -25,10 +28,6 @@ function AvatarPage() {
         handle: data.handle,
         private_bio: data.private_bio,
         public_bio: data.public_bio,
-        auto_interval: data.auto_interval,
-        vote_chance: data.vote_chance,
-        reply_chance: data.reply_chance,
-        is_auto_enabled: data.is_auto_enabled
       });
     } catch (err) {
       console.error('Failed to load avatar:', err);
@@ -84,11 +83,45 @@ function AvatarPage() {
   if (loading) return <div className="loading">Loading...</div>;
   if (!avatar) return <div className="empty-state">Avatar not found</div>;
 
+  const toggleExpand = (itemId) => {
+    setExpandedItems(prev => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
+
+  const isLongContent = (content) => content && content.length > MAX_CONTENT_LENGTH;
+
+  const renderTruncatedContent = (item, type) => {
+    const isExpanded = expandedItems[item.id];
+    const content = item.content;
+    if (!content) return null;
+
+    const shouldTruncate = isLongContent(content) && !isExpanded;
+
+    return (
+      <Link to={`/post/${type === 'post' ? item.id : item.post_id}`}>
+        <div
+          className="post-text"
+          style={{
+            fontSize: '13px',
+            display: shouldTruncate ? '-webkit-box' : 'block',
+            WebkitLineClamp: shouldTruncate ? 3 : 'unset',
+            WebkitBoxOrient: shouldTruncate ? 'vertical' : 'unset',
+            overflow: shouldTruncate ? 'hidden' : 'visible',
+            textOverflow: shouldTruncate ? 'ellipsis' : 'unset',
+          }}
+        >
+          {content}
+        </div>
+      </Link>
+    );
+  };
+
   const renderHistoryItem = (item, type) => {
     const score = (item.upvotes || 0) - (item.downvotes || 0);
     const voteColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
     const scoreColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
     const isPost = type === 'post';
+    const isExpanded = expandedItems[item.id];
+    const shouldTruncate = isLongContent(item.content) && !isExpanded;
 
     return (
       <div key={item.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
@@ -100,25 +133,42 @@ function AvatarPage() {
             <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▼</span>
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Community and post title */}
-            <div className="post-meta" style={{ marginBottom: '4px' }}>
+            {/* Community, post title, and timestamp inline */}
+            <div className="post-meta" style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
               <Link to={`/community/${item.community?.id || 'all'}`}>c/{item.community?.name || 'Unknown'}</Link>
               {isPost && item.title && (
-                <Link to={`/post/${item.id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
+                <Link to={`/post/${item.id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)' }}>
                   {item.title}
                 </Link>
               )}
               {!isPost && item.post_title && (
-                <Link to={`/post/${item.post_id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
+                <Link to={`/post/${item.post_id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)' }}>
                   {item.post_title}
                 </Link>
               )}
+              <span>{new Date(item.created_at).toLocaleString()}</span>
             </div>
-            {/* Content - clickable */}
-            <Link to={`/post/${isPost ? item.id : item.post_id}`}>
-              <div className="post-text" style={{ fontSize: '13px' }}>{item.content}</div>
-            </Link>
-            <div className="post-meta">{new Date(item.created_at).toLocaleString()}</div>
+            {/* Content - truncated with expand */}
+            {renderTruncatedContent(item, type)}
+            {/* Show more button where timestamp was */}
+            {shouldTruncate && (
+              <button
+                className="secondary"
+                style={{
+                  fontSize: '12px',
+                  padding: '2px 8px',
+                  marginTop: '4px',
+                  cursor: 'pointer',
+                  background: 'none',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '4px',
+                  color: 'var(--color-text-muted)',
+                }}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleExpand(item.id); }}
+              >
+                Show more
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -223,28 +273,6 @@ function AvatarPage() {
               <label>Public Bio</label>
               <textarea value={form.public_bio} onChange={e => setForm({ ...form, public_bio: e.target.value })} />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' }}>
-              <div className="form-group">
-                <label>Auto Interval (min)</label>
-                <input type="number" value={form.auto_interval} onChange={e => setForm({ ...form, auto_interval: parseInt(e.target.value) })} />
-              </div>
-              <div className="form-group">
-                <label>Vote Chance (0-1)</label>
-                <input type="number" step="0.1" min="0" max="1" value={form.vote_chance} onChange={e => setForm({ ...form, vote_chance: parseFloat(e.target.value) })} />
-              </div>
-              <div className="form-group">
-                <label>Reply Chance (0-1)</label>
-                <input type="number" step="0.1" min="0" max="1" value={form.reply_chance} onChange={e => setForm({ ...form, reply_chance: parseFloat(e.target.value) })} />
-              </div>
-            </div>
-            <label className="form-checkbox">
-              <input
-                type="checkbox"
-                checked={!!form.is_auto_enabled}
-                onChange={e => setForm({ ...form, is_auto_enabled: e.target.checked ? 1 : 0 })}
-              />
-              Auto-Interact Enabled
-            </label>
           </div>
         ) : (
           <>
@@ -322,7 +350,9 @@ function AvatarPage() {
             combinedHistory
               .filter(item => {
                 if (historyTab === 'all') return true;
-                return item._type === historyTab;
+                // Handle both singular and plural forms: _type='post' matches 'posts', _type='comment' matches 'comments'
+                const typeMatch = historyTab.replace(/s$/, '') === item._type;
+                return typeMatch;
               })
               .map(item => renderHistoryItem(item, item._type))
           )}

@@ -8,11 +8,7 @@ const SCHEMA = `
     name TEXT NOT NULL,
     handle TEXT NOT NULL UNIQUE,
     private_bio TEXT DEFAULT '',
-    public_bio TEXT DEFAULT '',
-    auto_interval INTEGER DEFAULT 5,
-    vote_chance REAL DEFAULT 0.5,
-    reply_chance REAL DEFAULT 0.5,
-    is_auto_enabled BOOLEAN DEFAULT 1
+    public_bio TEXT DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS Communities (
@@ -191,7 +187,7 @@ class Database {
       this.db = new this.SQL.Database();
       this.db.run(SCHEMA);
       // Insert default settings
-      this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('auto_interact_enabled', 'false')");
+      this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_url', 'http://localhost:11434/v1')");
       this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_url', 'http://localhost:11434/v1')");
       this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_key', '')");
       this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_model', 'llama3')");
@@ -241,6 +237,31 @@ class Database {
   }
 
   destroy() {
+    // Preserve LLM connection settings before destroying the database
+    const preservedSettings = {};
+    try {
+      if (this.db) {
+        const settingsRows = this.db.exec('SELECT key, value FROM Settings');
+        if (settingsRows.length > 0) {
+          const settingsMap = {};
+          for (const row of settingsRows[0].values) {
+            settingsMap[row[0]] = row[1];
+          }
+          // Preserve LLM-related settings
+          preservedSettings.llm_api_url = settingsMap['llm_api_url'] || 'http://localhost:11434/v1';
+          preservedSettings.llm_api_key = settingsMap['llm_api_key'] || '';
+          preservedSettings.llm_model = settingsMap['llm_model'] || 'llama3';
+          preservedSettings.global_system_prompt = settingsMap['global_system_prompt'] || '';
+        }
+      }
+    } catch (e) {
+      // If we can't read settings, use defaults
+      preservedSettings.llm_api_url = 'http://localhost:11434/v1';
+      preservedSettings.llm_api_key = '';
+      preservedSettings.llm_model = 'llama3';
+      preservedSettings.global_system_prompt = '';
+    }
+
     // Close the current database
     if (this.db) {
       this.db.close();
@@ -255,11 +276,11 @@ class Database {
     // Reinitialize with a fresh database
     this.db = new this.SQL.Database();
     this.db.run(SCHEMA);
-    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('auto_interact_enabled', 'false')");
-    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_url', 'http://localhost:11434/v1')");
-    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_api_key', '')");
-    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('llm_model', 'llama3')");
-    this.db.run("INSERT OR IGNORE INTO Settings (key, value) VALUES ('global_system_prompt', '')");
+    // Restore preserved LLM connection settings
+    this.db.run("INSERT OR REPLACE INTO Settings (key, value) VALUES ('llm_api_url', ?)", [preservedSettings.llm_api_url]);
+    this.db.run("INSERT OR REPLACE INTO Settings (key, value) VALUES ('llm_api_key', ?)", [preservedSettings.llm_api_key]);
+    this.db.run("INSERT OR REPLACE INTO Settings (key, value) VALUES ('llm_model', ?)", [preservedSettings.llm_model]);
+    this.db.run("INSERT OR REPLACE INTO Settings (key, value) VALUES ('global_system_prompt', ?)", [preservedSettings.global_system_prompt]);
     this.save();
   }
 }

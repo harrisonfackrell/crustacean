@@ -75,7 +75,7 @@ router.get('/avatars/:id', (req, res) => {
 });
 
 router.post('/avatars', (req, res) => {
-  const { name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled } = req.body;
+  const { name, handle, private_bio, public_bio } = req.body;
   if (!name || !handle) {
     return res.status(400).json({ error: 'name and handle are required' });
   }
@@ -84,8 +84,8 @@ router.post('/avatars', (req, res) => {
     return res.status(400).json({ error: 'handle must contain at least one valid character (a-z, 0-9, _)' });
   }
   getDb().run(
-    'INSERT INTO Avatars (name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [name, sanitizedHandle, private_bio || '', public_bio || '', auto_interval || 5, vote_chance || 0.5, reply_chance || 0.5, is_auto_enabled !== undefined ? is_auto_enabled : 1]
+    'INSERT INTO Avatars (name, handle, private_bio, public_bio) VALUES (?, ?, ?, ?)',
+    [name, sanitizedHandle, private_bio || '', public_bio || '']
   );
   const id = getDb().lastInsertRowid();
   res.json({ id, name, handle: sanitizedHandle });
@@ -96,7 +96,7 @@ router.put('/avatars/:id', (req, res) => {
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
-  const { name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled } = req.body;
+  const { name, handle, private_bio, public_bio } = req.body;
   // Sanitize handle if provided and different from existing
   let sanitizedHandle = handle;
   if (handle && handle !== avatar.handle) {
@@ -108,8 +108,8 @@ router.put('/avatars/:id', (req, res) => {
     sanitizedHandle = avatar.handle;
   }
   getDb().run(
-    'UPDATE Avatars SET name = COALESCE(?, name), handle = COALESCE(?, handle), private_bio = COALESCE(?, private_bio), public_bio = COALESCE(?, public_bio), auto_interval = COALESCE(?, auto_interval), vote_chance = COALESCE(?, vote_chance), reply_chance = COALESCE(?, reply_chance), is_auto_enabled = COALESCE(?, is_auto_enabled) WHERE id = ?',
-    [name, sanitizedHandle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled, avatar.id]
+    'UPDATE Avatars SET name = COALESCE(?, name), handle = COALESCE(?, handle), private_bio = COALESCE(?, private_bio), public_bio = COALESCE(?, public_bio) WHERE id = ?',
+    [name, sanitizedHandle, private_bio, public_bio, avatar.id]
   );
   res.json({ success: true });
 });
@@ -135,7 +135,7 @@ router.post('/avatars/:id/reset', (req, res) => {
 });
 
 router.get('/avatars/:id/export', (req, res) => {
-  const avatar = getDb().get('SELECT name, handle, private_bio, public_bio, auto_interval, vote_chance, reply_chance, is_auto_enabled FROM Avatars WHERE id = ?', [req.params.id]);
+  const avatar = getDb().get('SELECT name, handle, private_bio, public_bio FROM Avatars WHERE id = ?', [req.params.id]);
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }

@@ -10,14 +10,12 @@ const router = express.Router();
 
 router.post('/auto-interact/start', (req, res) => {
   const autoInteract = getAutoInteractService();
-  getDb().run('INSERT OR REPLACE INTO Settings (key, value) VALUES (?, ?)', ['auto_interact_enabled', 'true']);
   autoInteract.start();
   res.json({ success: true });
 });
 
 router.post('/auto-interact/stop', (req, res) => {
   const autoInteract = getAutoInteractService();
-  getDb().run('INSERT OR REPLACE INTO Settings (key, value) VALUES (?, ?)', ['auto_interact_enabled', 'false']);
   autoInteract.stop();
   res.json({ success: true });
 });

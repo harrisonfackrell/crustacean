@@ -291,11 +291,7 @@ The output MUST be a valid JSON object with this exact structure:
           "name": "<display name>",
           "handle": "<lowercase handle with no spaces or special characters, max 20 chars>",
           "private_bio": "<short private bio text, 1-2 sentences>",
-          "public_bio": "<short public bio text, 1-2 sentences>",
-          "auto_interval": 5,
-          "vote_chance": 0.5,
-          "reply_chance": 0.5,
-          "is_auto_enabled": true
+          "public_bio": "<short public bio text, 1-2 sentences>"
         }
       }
     ],
@@ -318,8 +314,6 @@ Rules:
 - Handles should be lowercase, no spaces or special characters, max 20 characters.
 - Community rules arrays should have 3-5 rules each.
 - Keep everything creative and varied — no repetitive names or descriptions.
-- The "is_auto_enabled" field must be a boolean (true/false), not a number.
-- The "vote_chance" and "reply_chance" fields should be numbers between 0 and 1.
 - Reply ONLY with the JSON object, nothing else. No markdown formatting, no explanation text.
 ${existingDataText}
     `.trim();
