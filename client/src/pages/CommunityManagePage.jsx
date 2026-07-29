@@ -67,6 +67,7 @@ function CommunityManagePage() {
             onChange={e => setSearchQuery(e.target.value)}
             style={{ flex: 1, marginLeft: '16px', padding: '4px 8px', fontSize: '12px' }}
           />
+          <button className="create-community-btn" onClick={() => setShowCreateCommunity(true)}>+</button>
         </div>
         <div className="card-body">
           {/* "All" pseudo-community - always first */}
@@ -89,7 +90,6 @@ function CommunityManagePage() {
               </div>
             ))
           )}
-          <button className="create-community-btn" onClick={() => setShowCreateCommunity(true)}>+</button>
         </div>
       </div>
 

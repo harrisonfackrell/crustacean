@@ -67,6 +67,7 @@ function AvatarManagePage() {
             onChange={e => setSearchQuery(e.target.value)}
             style={{ flex: 1, marginLeft: '16px', padding: '4px 8px', fontSize: '12px' }}
           />
+          <button className="create-community-btn" onClick={() => setShowCreateAvatar(true)}>+</button>
         </div>
         <div className="card-body">
           {filteredAvatars.length === 0 ? (
@@ -74,19 +75,18 @@ function AvatarManagePage() {
           ) : (
             filteredAvatars.map(a => (
               <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--color-border)' }}>
-                <div>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <Link to={`/avatar/${a.id}`} style={{ color: 'var(--color-text)' }}>u/{a.handle}</Link>{' '}
                   <span style={{ color: 'var(--color-text-muted)' }}>{a.name}</span>
                   <span style={{ marginLeft: '8px', fontSize: '12px', color: a.is_auto_enabled ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
                     {a.is_auto_enabled ? '● Auto' : '○ Manual'}
                   </span>
-                  <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px' }}>{a.public_bio || 'No bio'}</div>
+                  <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.public_bio || 'No bio'}</div>
                 </div>
-                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteAvatar(a.id)}>🗑️</button>
+                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, flexShrink: 0, marginLeft: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteAvatar(a.id)}>🗑️</button>
               </div>
             ))
           )}
-          <button className="create-community-btn" onClick={() => setShowCreateAvatar(true)}>+</button>
         </div>
       </div>
 
