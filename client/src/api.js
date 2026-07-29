@@ -37,7 +37,7 @@ export const api = {
 
   // Communities
   getCommunities: () => request('GET', '/communities'),
-  getCommunity: (id, sort = 'hot') => {
+  getCommunity: (id, sort = 'top') => {
     const params = new URLSearchParams({ sort });
     return request('GET', `/communities/${id}?${params}`);
   },
@@ -48,7 +48,7 @@ export const api = {
   exportCommunity: (id) => request('GET', `/communities/${id}/export`),
 
   // Posts
-  getPost: (id, sort = 'hot') => {
+  getPost: (id, sort = 'top') => {
     const params = new URLSearchParams({ sort });
     return request('GET', `/posts/${id}?${params}`);
   },

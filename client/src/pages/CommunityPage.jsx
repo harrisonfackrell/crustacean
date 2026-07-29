@@ -20,7 +20,7 @@ function CommunityPage({ id: idProp }) {
   const [extraContext, setExtraContext] = useState('');
   const [length, setLength] = useState(3);
   const [generating, setGenerating] = useState(false);
-  const [sort, setSort] = useState('hot');
+  const [sort, setSort] = useState('top');
 
   useEffect(() => {
     loadCommunity();
@@ -111,6 +111,14 @@ function CommunityPage({ id: idProp }) {
   };
 
   const { voteOnPost } = useInteract(loadCommunity);
+
+  const getSortedPosts = (posts, sortType) => {
+    if (!posts) return [];
+    if (sortType === 'top') {
+      return [...posts].sort((a, b) => (b.commentCount || 0) - (a.commentCount || 0));
+    }
+    return posts;
+  };
 
   if (loading) return <div className="loading">Loading...</div>;
   if (!community) return <div className="empty-state">Community not found</div>;
@@ -203,14 +211,14 @@ function CommunityPage({ id: idProp }) {
                 <button className="secondary" onClick={() => setEditing(false)}>Cancel</button>
               </>
             ) : (
-              ['hot', 'new', 'top'].map(s => (
+              ['top', 'new'].map(s => (
                 <button
                   key={s}
                   className={sort === s ? 'primary' : 'secondary'}
                   onClick={() => setSort(s)}
                   style={{ textTransform: 'capitalize', fontSize: '13px', padding: '6px 14px' }}
                 >
-                  {s === 'hot' ? '🔥 ' : s === 'new' ? '🕐 ' : '📈 '}{s}
+                  {s === 'top' ? '📈 ' : '🕐 '}{s}
                 </button>
               ))
             )}
@@ -237,7 +245,7 @@ function CommunityPage({ id: idProp }) {
       {community.posts?.length === 0 ? (
         <div className="empty-state">No posts yet</div>
       ) : (
-        community.posts.map(post => (
+        getSortedPosts(community.posts, sort).map(post => (
           <PostCard key={post.id} post={post} showCommunity={isPseudoCommunity} onVote={voteOnPost} avatars={avatars} />
         ))
       )}
