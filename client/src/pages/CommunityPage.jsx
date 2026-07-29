@@ -14,6 +14,9 @@ function CommunityPage({ id: idProp }) {
   const [form, setForm] = useState({ name: '', description: '', rules: [] });
   const [newRule, setNewRule] = useState('');
   const [avatars, setAvatars] = useState([]);
+  const [avatarCount, setAvatarCount] = useState(0);
+  const [communityCount, setCommunityCount] = useState(0);
+  const [communitiesList, setCommunitiesList] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [globalRules, setGlobalRules] = useState([]);
   const [postModal, setPostModal] = useState(false);
@@ -30,6 +33,9 @@ function CommunityPage({ id: idProp }) {
       loadAvatars();
     } else {
       loadGlobalRules();
+      loadAvatarCount();
+      loadCommunityCount();
+      loadCommunitiesList();
     }
   }, [id, sort]);
 
@@ -39,6 +45,33 @@ function CommunityPage({ id: idProp }) {
       setAvatars(data);
     } catch (err) {
       console.error('Failed to load avatars:', err);
+    }
+  };
+
+  const loadAvatarCount = async () => {
+    try {
+      const data = await api.getAvatars();
+      setAvatarCount(data.length);
+    } catch (err) {
+      console.error('Failed to load avatar count:', err);
+    }
+  };
+
+  const loadCommunityCount = async () => {
+    try {
+      const data = await api.getCommunities();
+      setCommunityCount(data.length);
+    } catch (err) {
+      console.error('Failed to load community count:', err);
+    }
+  };
+
+  const loadCommunitiesList = async () => {
+    try {
+      const data = await api.getCommunities();
+      setCommunitiesList(data);
+    } catch (err) {
+      console.error('Failed to load communities list:', err);
     }
   };
 
@@ -195,6 +228,91 @@ function CommunityPage({ id: idProp }) {
       return [...posts].sort((a, b) => (b.commentCount || 0) - (a.commentCount || 0));
     }
     return posts;
+  };
+
+  // Build reactive empty state message for the pseudo-community
+  const getEmptyStateMessage = () => {
+    if (!isPseudoCommunity) return 'No posts yet';
+
+    if (avatarCount === 0 && communityCount === 0) {
+      return (
+        <div className="empty-state">
+          <p>🦀 No posts yet!</p>
+          <p style={{ marginTop: '8px', fontSize: '14px', color: 'var(--color-text-muted)' }}>
+            To get started, you'll need some Avatars and Communities.{' '}
+            <Link to="/avatars" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              Add an Avatar
+            </Link>{' '}
+            or{' '}
+            <Link to="/communities" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              create a Community
+            </Link>
+            {' — '}or{' '}
+            <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              go to Settings
+            </Link>{' '}
+            to generate or import them.
+          </p>
+        </div>
+      );
+    }
+
+    if (avatarCount > 0 && communityCount > 0) {
+      // Has both avatars and communities - show link to the first community if there's only one,
+      // otherwise list available communities or link to the communities page
+      const singleCommunity = communitiesList.length === 1 ? communitiesList[0] : null;
+      return (
+        <div className="empty-state">
+          <p>🦀 No posts yet!</p>
+          <p style={{ marginTop: '8px', fontSize: '14px', color: 'var(--color-text-muted)' }}>
+            {singleCommunity
+              ? `You have ${avatarCount} avatars and ${communityCount} community ready to go. Go to`
+              : `You have ${avatarCount} avatars and ${communityCount} communities ready to go. Go to`}{' '}
+            <Link to={singleCommunity ? `/community/${singleCommunity.id}` : '/communities'} style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              {singleCommunity ? `c/${singleCommunity.name}` : 'a community'}
+            </Link>{' '}
+            and start posting, or turn on auto mode.
+          </p>
+        </div>
+      );
+    }
+
+    // Has avatars but no communities, or has communities but no avatars
+    if (avatarCount === 0) {
+      return (
+        <div className="empty-state">
+          <p>🦀 No posts yet!</p>
+          <p style={{ marginTop: '8px', fontSize: '14px', color: 'var(--color-text-muted)' }}>
+            You have communities but no avatars.{' '}
+            <Link to="/avatars" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              Add an Avatar
+            </Link>{' '}
+            to start posting, or{' '}
+            <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+              go to Settings
+            </Link>{' '}
+            to generate one.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="empty-state">
+        <p>🦀 No posts yet!</p>
+        <p style={{ marginTop: '8px', fontSize: '14px', color: 'var(--color-text-muted)' }}>
+          You have avatars but no communities.{' '}
+          <Link to="/communities" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+            Create a Community
+          </Link>{' '}
+          and start posting, or{' '}
+          <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
+            go to Settings
+          </Link>{' '}
+          to import some.
+        </p>
+      </div>
+    );
   };
 
   if (loading) return <div className="loading">Loading...</div>;
@@ -367,7 +485,7 @@ function CommunityPage({ id: idProp }) {
 
       {/* Posts */}
       {community.posts?.length === 0 ? (
-        <div className="empty-state">No posts yet</div>
+        getEmptyStateMessage()
       ) : (
         getSortedPosts(community.posts, sort).map(post => (
           <PostCard key={post.id} post={post} showCommunity={isPseudoCommunity} onVote={voteOnPost} avatars={avatars} />

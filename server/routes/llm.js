@@ -119,4 +119,39 @@ router.post('/llm/generate-bulk-import', async (req, res) => {
   }
 });
 
+// LLM MODELS LISTING (OpenAI-compatible /models endpoint)
+router.get('/llm/models', async (req, res) => {
+  const { apiUrl, apiKey } = getLLMService().getSettings();
+
+  if (!apiUrl || apiUrl === 'http://localhost:11434/v1') {
+    return res.status(400).json({ error: 'LLM API URL not configured' });
+  }
+
+  try {
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(`${apiUrl}/models`, {
+      method: 'GET',
+      headers
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Models API error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    res.json(data.data || []);
+  } catch (error) {
+    console.error('Failed to fetch LLM models:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

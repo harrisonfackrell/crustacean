@@ -13,6 +13,9 @@ function SettingsPage() {
   const [newRule, setNewRule] = useState('');
   const [loading, setLoading] = useState(true);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
+  const [models, setModels] = useState([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -40,6 +43,29 @@ function SettingsPage() {
     } catch (err) {
       console.error('Failed to save setting:', err);
     }
+  };
+
+  const fetchModels = async () => {
+    if (!settings.llm_api_url) {
+      setModelsError('Please enter an API URL first');
+      return;
+    }
+    setModelsLoading(true);
+    setModelsError(null);
+    try {
+      const data = await api.getModels();
+      setModels(data.map(m => m.id));
+    } catch (err) {
+      console.error('Failed to fetch models:', err);
+      setModelsError(err.message || 'Failed to fetch models');
+    } finally {
+      setModelsLoading(false);
+    }
+  };
+
+  const handleModelSelect = async (modelValue) => {
+    // Save the selected model and also update the custom input field to reflect the selection
+    await handleSaveSetting('llm_model', modelValue);
   };
 
   const handleAddRule = async () => {
@@ -170,7 +196,7 @@ function SettingsPage() {
             <input
               value={settings.llm_api_url || ''}
               onChange={e => handleSaveSetting('llm_api_url', e.target.value)}
-              placeholder="http://localhost:11434/v1"
+              placeholder="e.g., http://localhost:11434/v1"
             />
           </div>
           <div className="form-group">
@@ -184,10 +210,44 @@ function SettingsPage() {
           </div>
           <div className="form-group">
             <label>Model</label>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <select
+                value={settings.llm_model || ''}
+                onChange={e => handleModelSelect(e.target.value)}
+                disabled={modelsLoading || modelsError || models.length === 0}
+                style={{ flex: 1 }}
+              >
+                <option value="">Select a model...</option>
+                {models.map(model => (
+                  <option key={model} value={model}>{model}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="primary"
+                onClick={fetchModels}
+                disabled={modelsLoading || !settings.llm_api_url}
+                title="Refresh model list"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {modelsLoading ? 'Loading...' : models.length > 0 ? '↻ Refresh' : 'Fetch Models'}
+              </button>
+            </div>
+            {modelsError && (
+              <small style={{ color: 'var(--color-danger)', display: 'block', marginTop: '4px' }}>
+                {modelsError}
+              </small>
+            )}
+            <small style={{ display: 'block', marginTop: '4px', opacity: 0.7 }}>
+              Select a model from the list, or type a custom model name below if it's not listed.
+            </small>
+          </div>
+          <div className="form-group">
+            <label>Custom Model (fallback — used if different from dropdown selection)</label>
             <input
               value={settings.llm_model || ''}
               onChange={e => handleSaveSetting('llm_model', e.target.value)}
-              placeholder="llama3"
+              placeholder="e.g., llama3, gpt-4"
             />
           </div>
         </div>

@@ -90,5 +90,8 @@ export const api = {
   generateVote: (data) => request('POST', '/llm/generate-vote', data),
 
   // Bulk Import Generation
-  generateBulkImport: (data) => request('POST', '/llm/generate-bulk-import', data)
+  generateBulkImport: (data) => request('POST', '/llm/generate-bulk-import', data),
+
+  // LLM Models
+  getModels: () => request('GET', '/llm/models')
 };
