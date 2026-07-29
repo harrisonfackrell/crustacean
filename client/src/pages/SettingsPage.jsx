@@ -190,41 +190,6 @@ function SettingsPage() {
               placeholder="llama3"
             />
           </div>
-          <div className="form-group">
-            <label>Global System Prompt (optional)</label>
-            <textarea
-              value={settings.global_system_prompt || ''}
-              onChange={e => handleSaveSetting('global_system_prompt', e.target.value)}
-              placeholder="Additional system prompt context for all LLM calls..."
-              style={{ minHeight: '100px' }}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Global Rules */}
-      <div className="card" style={{ marginTop: '16px' }}>
-        <div className="card-header"><h3>Global Rules</h3></div>
-        <div className="card-body">
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-            <input
-              value={newRule}
-              onChange={e => setNewRule(e.target.value)}
-              placeholder="Add a global rule..."
-              onKeyDown={e => e.key === 'Enter' && handleAddRule()}
-            />
-            <button className="primary" onClick={handleAddRule}>Add</button>
-          </div>
-          {globalRules.length === 0 ? (
-            <p className="empty-state">No global rules set</p>
-          ) : (
-            globalRules.map(rule => (
-              <div key={rule.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
-                <span>{rule.rule}</span>
-                <button className="danger" onClick={() => handleDeleteRule(rule.id)}>Delete</button>
-              </div>
-            ))
-          )}
         </div>
       </div>
       {/* Bulk Import Modal */}

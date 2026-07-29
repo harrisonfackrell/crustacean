@@ -11,9 +11,11 @@ function CommunityPage({ id: idProp }) {
   const [community, setCommunity] = useState(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', rules: '' });
+  const [form, setForm] = useState({ name: '', description: '', rules: [] });
+  const [newRule, setNewRule] = useState('');
   const [avatars, setAvatars] = useState([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [globalRules, setGlobalRules] = useState([]);
   const [postModal, setPostModal] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const [postTitle, setPostTitle] = useState('');
@@ -26,6 +28,8 @@ function CommunityPage({ id: idProp }) {
     loadCommunity();
     if (!isPseudoCommunity) {
       loadAvatars();
+    } else {
+      loadGlobalRules();
     }
   }, [id, sort]);
 
@@ -38,6 +42,15 @@ function CommunityPage({ id: idProp }) {
     }
   };
 
+  const loadGlobalRules = async () => {
+    try {
+      const rules = await api.getGlobalRules();
+      setGlobalRules(rules);
+    } catch (err) {
+      console.error('Failed to load global rules:', err);
+    }
+  };
+
   const loadCommunity = async () => {
     try {
       const data = await api.getCommunity(id, sort);
@@ -46,7 +59,7 @@ function CommunityPage({ id: idProp }) {
         setForm({
           name: data.name,
           description: data.description,
-          rules: Array.isArray(data.rules) ? data.rules.join('\n') : (data.rules ? JSON.parse(data.rules).join('\n') : '')
+          rules: Array.isArray(data.rules) ? data.rules : (data.rules ? JSON.parse(data.rules) : [])
         });
       }
     } catch (err) {
@@ -56,11 +69,49 @@ function CommunityPage({ id: idProp }) {
     }
   };
 
-  const handleSave = async () => {
+  const handleAddRule = () => {
+    if (!newRule.trim()) return;
+    setForm({ ...form, rules: [...form.rules, newRule.trim()] });
+    setNewRule('');
+  };
+
+  const handleRemoveRule = (index) => {
+    setForm({ ...form, rules: form.rules.filter((_, i) => i !== index) });
+  };
+
+  const handleAddGlobalRule = async () => {
+    if (!newRule.trim()) return;
     try {
-      const rulesArray = form.rules.split('\n').filter(r => r.trim());
-      await api.updateCommunity(id, { name: form.name, description: form.description, rules: rulesArray });
+      await api.addGlobalRule(newRule.trim());
+      setNewRule('');
+      loadGlobalRules();
+      loadCommunity();
+    } catch (err) {
+      console.error('Failed to add global rule:', err);
+    }
+  };
+
+  const handleDeleteGlobalRule = async (ruleId) => {
+    try {
+      await api.deleteGlobalRule(ruleId);
+      loadGlobalRules();
+      loadCommunity();
+    } catch (err) {
+      console.error('Failed to delete global rule:', err);
+    }
+  };
+
+  const handleSave = async () => {
+    if (isPseudoCommunity) {
+      // For the pseudo-community, global rules are already persisted via API calls
       setEditing(false);
+      setNewRule('');
+      return;
+    }
+    try {
+      await api.updateCommunity(id, { name: form.name, description: form.description, rules: form.rules });
+      setEditing(false);
+      setNewRule('');
       loadCommunity();
     } catch (err) {
       console.error('Failed to save community:', err);
@@ -68,27 +119,53 @@ function CommunityPage({ id: idProp }) {
   };
 
   const handleReset = async () => {
-    if (!confirm('Reset all emergent data for this community? This cannot be undone.')) return;
-    try {
-      await api.resetCommunity(id);
-      loadCommunity();
-    } catch (err) {
-      console.error('Failed to reset community:', err);
+    if (isPseudoCommunity) {
+      if (!confirm('Reset ALL emergent data? This will clear all posts, comments, votes, and relationships. This cannot be undone.')) return;
+      if (!confirm('Are you absolutely sure?')) return;
+      try {
+        await api.resetAll();
+        loadCommunity();
+      } catch (err) {
+        console.error('Failed to reset:', err);
+      }
+    } else {
+      if (!confirm('Reset all emergent data for this community? This cannot be undone.')) return;
+      try {
+        await api.resetCommunity(id);
+        loadCommunity();
+      } catch (err) {
+        console.error('Failed to reset community:', err);
+      }
     }
   };
 
   const handleExport = async () => {
-    try {
-      const data = await api.exportCommunity(id);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${form.name || 'community'}-export.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Failed to export community:', err);
+    if (isPseudoCommunity) {
+      try {
+        const data = await api.exportAll();
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'crustacean-export.json';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('Failed to export:', err);
+      }
+    } else {
+      try {
+        const data = await api.exportCommunity(id);
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${form.name || 'community'}-export.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        console.error('Failed to export community:', err);
+      }
     }
   };
 
@@ -128,7 +205,7 @@ function CommunityPage({ id: idProp }) {
       <div className="community-header" style={{ position: 'relative' }}>
         <div className="community-banner"></div>
         {/* Three-dot menu over the banner - hidden while editing */}
-        {!isPseudoCommunity && !editing && (
+        {!editing && (
           <div style={{ position: 'absolute', top: '12px', right: '12px', zIndex: 10 }}>
             <button
               className="secondary"
@@ -173,19 +250,66 @@ function CommunityPage({ id: idProp }) {
           </div>
 
           {editing ? (
-            <div style={{ marginTop: '16px' }}>
-              <div className="form-group">
-                <label>Name</label>
-                <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Description</label>
-                <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
-              </div>
-              <div className="form-group">
-                <label>Rules (one per line)</label>
-                <textarea value={form.rules} onChange={e => setForm({ ...form, rules: e.target.value })} style={{ minHeight: '150px' }} />
-              </div>
+            <div style={{ marginTop: '16px', paddingBottom: '60px' }}>
+              {isPseudoCommunity ? (
+                <>
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input value="All" disabled style={{ backgroundColor: 'var(--color-surface-hover)', cursor: 'not-allowed' }} />
+                  </div>
+                  <div className="form-group">
+                    <label>Description</label>
+                    <textarea value="Every post from every community" disabled style={{ backgroundColor: 'var(--color-surface-hover)', cursor: 'not-allowed' }} />
+                  </div>
+                  <div className="form-group">
+                    <label>Global Rules</label>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                      <input
+                        value={newRule}
+                        onChange={e => setNewRule(e.target.value)}
+                        placeholder="Add a global rule..."
+                        onKeyDown={e => e.key === 'Enter' && handleAddGlobalRule()}
+                      />
+                      <button className="icon-add-btn" onClick={handleAddGlobalRule}>+</button>
+                    </div>
+                    {globalRules.length > 0 && globalRules.map((rule) => (
+                        <div key={rule.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+                          <span>{rule.rule}</span>
+                          <button className="icon-trash-btn" onClick={() => handleDeleteGlobalRule(rule.id)}>🗑️</button>
+                        </div>
+                      ))}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>Name</label>
+                    <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Description</label>
+                    <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
+                  </div>
+                  <div className="form-group">
+                    <label>Rules</label>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                      <input
+                        value={newRule}
+                        onChange={e => setNewRule(e.target.value)}
+                        placeholder="Add a rule..."
+                        onKeyDown={e => e.key === 'Enter' && handleAddRule()}
+                      />
+                      <button className="icon-add-btn" onClick={handleAddRule}>+</button>
+                    </div>
+                    {form.rules.length > 0 && form.rules.map((rule, index) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+                          <span>{rule}</span>
+                          <button className="icon-trash-btn" onClick={() => handleRemoveRule(index)}>🗑️</button>
+                        </div>
+                      ))}
+                  </div>
+                </>
+              )}
             </div>
           ) : (
             <>

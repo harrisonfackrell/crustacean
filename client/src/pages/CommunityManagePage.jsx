@@ -6,7 +6,8 @@ function CommunityManagePage() {
   const [communities, setCommunities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateCommunity, setShowCreateCommunity] = useState(false);
-  const [communityForm, setCommunityForm] = useState({ name: '', description: '', rules: '' });
+  const [communityForm, setCommunityForm] = useState({ name: '', description: '', rules: [] });
+  const [newRule, setNewRule] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -28,12 +29,22 @@ function CommunityManagePage() {
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  const handleAddCommunityRule = () => {
+    if (!newRule.trim()) return;
+    setCommunityForm({ ...communityForm, rules: [...communityForm.rules, newRule.trim()] });
+    setNewRule('');
+  };
+
+  const handleRemoveCommunityRule = (index) => {
+    setCommunityForm({ ...communityForm, rules: communityForm.rules.filter((_, i) => i !== index) });
+  };
+
   const handleCreateCommunity = async () => {
     if (!communityForm.name) return;
     try {
-      const rulesArray = communityForm.rules.split('\n').filter(r => r.trim());
-      await api.createCommunity({ name: communityForm.name, description: communityForm.description, rules: rulesArray });
-      setCommunityForm({ name: '', description: '', rules: '' });
+      await api.createCommunity({ name: communityForm.name, description: communityForm.description, rules: communityForm.rules });
+      setCommunityForm({ name: '', description: '', rules: [] });
+      setNewRule('');
       setShowCreateCommunity(false);
       loadData();
     } catch (err) {
@@ -111,8 +122,22 @@ function CommunityManagePage() {
                 <textarea value={communityForm.description} onChange={e => setCommunityForm({ ...communityForm, description: e.target.value })} />
               </div>
               <div className="form-group">
-                <label>Rules (one per line)</label>
-                <textarea value={communityForm.rules} onChange={e => setCommunityForm({ ...communityForm, rules: e.target.value })} style={{ minHeight: '150px' }} />
+                <label>Rules</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <input
+                    value={newRule}
+                    onChange={e => setNewRule(e.target.value)}
+                    placeholder="Add a rule..."
+                    onKeyDown={e => e.key === 'Enter' && handleAddCommunityRule()}
+                  />
+                  <button className="icon-add-btn" onClick={handleAddCommunityRule}>+</button>
+                </div>
+                {communityForm.rules.length > 0 && communityForm.rules.map((rule, index) => (
+                    <div key={index} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+                      <span>{rule}</span>
+                      <button className="icon-trash-btn" onClick={() => handleRemoveCommunityRule(index)}>🗑️</button>
+                    </div>
+                  ))}
               </div>
               <div className="form-actions">
                 <button className="primary" onClick={handleCreateCommunity}>Create</button>

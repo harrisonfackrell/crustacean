@@ -10,6 +10,7 @@ function AvatarPage() {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [form, setForm] = useState({});
+  const [historyTab, setHistoryTab] = useState('all'); // 'posts' | 'comments' | 'all'
 
   useEffect(() => {
     loadAvatar();
@@ -82,6 +83,52 @@ function AvatarPage() {
 
   if (loading) return <div className="loading">Loading...</div>;
   if (!avatar) return <div className="empty-state">Avatar not found</div>;
+
+  const renderHistoryItem = (item, type) => {
+    const score = (item.upvotes || 0) - (item.downvotes || 0);
+    const voteColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
+    const scoreColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
+    const isPost = type === 'post';
+
+    return (
+      <div key={item.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+          {/* Vote display */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '32px', paddingTop: '2px' }}>
+            <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▲</span>
+            <span style={{ fontWeight: 700, fontSize: '13px', color: scoreColor, margin: '2px 0' }}>{score}</span>
+            <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▼</span>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Community and post title */}
+            <div className="post-meta" style={{ marginBottom: '4px' }}>
+              <Link to={`/community/${item.community?.id || 'all'}`}>c/{item.community?.name || 'Unknown'}</Link>
+              {isPost && item.title && (
+                <Link to={`/post/${item.id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
+                  {item.title}
+                </Link>
+              )}
+              {!isPost && item.post_title && (
+                <Link to={`/post/${item.post_id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
+                  {item.post_title}
+                </Link>
+              )}
+            </div>
+            {/* Content - clickable */}
+            <Link to={`/post/${isPost ? item.id : item.post_id}`}>
+              <div className="post-text" style={{ fontSize: '13px' }}>{item.content}</div>
+            </Link>
+            <div className="post-meta">{new Date(item.created_at).toLocaleString()}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const combinedHistory = [
+    ...(avatar.posts || []).map(p => ({ ...p, _type: 'post' })),
+    ...(avatar.comments || []).map(c => ({ ...c, _type: 'comment' }))
+  ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
     <div className="container">
@@ -240,90 +287,44 @@ function AvatarPage() {
         </div>
       </div>
 
-      {/* Post History */}
+      {/* Combined Post & Comment History with Toggle */}
       <div className="card" style={{ marginTop: '16px' }}>
-        <div className="card-header"><h3>Post History</h3></div>
-        <div className="card-body">
-          {avatar.posts?.length === 0 ? (
-            <p className="empty-state">No posts yet</p>
-          ) : (
-            avatar.posts.map(p => {
-              const score = (p.upvotes || 0) - (p.downvotes || 0);
-              const voteColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
-              const scoreColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
-              return (
-                <div key={p.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                    {/* Vote display */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '32px', paddingTop: '2px' }}>
-                      <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▲</span>
-                      <span style={{ fontWeight: 700, fontSize: '13px', color: scoreColor, margin: '2px 0' }}>{score}</span>
-                      <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▼</span>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Community and post title */}
-                      <div className="post-meta" style={{ marginBottom: '4px' }}>
-                        <Link to={`/community/${p.community?.id || 'all'}`}>c/{p.community?.name || 'Unknown'}</Link>
-                        {p.title && (
-                          <Link to={`/post/${p.id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
-                            {p.title}
-                          </Link>
-                        )}
-                      </div>
-                      {/* Post content - clickable */}
-                      <Link to={`/post/${p.id}`}>
-                        <div className="post-text" style={{ fontSize: '13px' }}>{p.content}</div>
-                      </Link>
-                      <div className="post-meta">{new Date(p.created_at).toLocaleString()}</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
+        <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3>History</h3>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className={historyTab === 'posts' ? 'primary' : 'secondary'}
+              style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => setHistoryTab('posts')}
+            >
+              Posts
+            </button>
+            <button
+              className={historyTab === 'comments' ? 'primary' : 'secondary'}
+              style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => setHistoryTab('comments')}
+            >
+              Comments
+            </button>
+            <button
+              className={historyTab === 'all' ? 'primary' : 'secondary'}
+              style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
+              onClick={() => setHistoryTab('all')}
+            >
+              All
+            </button>
+          </div>
         </div>
-      </div>
-
-      {/* Comment History */}
-      <div className="card" style={{ marginTop: '16px' }}>
-        <div className="card-header"><h3>Comment History</h3></div>
         <div className="card-body">
-          {avatar.comments?.length === 0 ? (
-            <p className="empty-state">No comments yet</p>
+          {combinedHistory.length === 0 ? (
+            <p className="empty-state">No posts or comments yet</p>
           ) : (
-            avatar.comments.map(c => {
-              const score = (c.upvotes || 0) - (c.downvotes || 0);
-              const voteColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
-              const scoreColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
-              return (
-                <div key={c.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-                    {/* Vote display */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '32px', paddingTop: '2px' }}>
-                      <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▲</span>
-                      <span style={{ fontWeight: 700, fontSize: '13px', color: scoreColor, margin: '2px 0' }}>{score}</span>
-                      <span style={{ fontSize: '12px', color: voteColor, lineHeight: 1 }}>▼</span>
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      {/* Community and post title */}
-                      <div className="post-meta" style={{ marginBottom: '4px' }}>
-                        <Link to={`/community/${c.community?.id || 'all'}`}>c/{c.community?.name || 'Unknown'}</Link>
-                        {c.post_title && (
-                          <Link to={`/post/${c.post_id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)', marginLeft: '6px' }}>
-                            {c.post_title}
-                          </Link>
-                        )}
-                      </div>
-                      {/* Comment content - clickable to post */}
-                      <Link to={`/post/${c.post_id}`}>
-                        <div className="post-text" style={{ fontSize: '13px' }}>{c.content}</div>
-                      </Link>
-                      <div className="post-meta">{new Date(c.created_at).toLocaleString()}</div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })
+            combinedHistory
+              .filter(item => {
+                if (historyTab === 'all') return true;
+                return item._type === historyTab;
+              })
+              .map(item => renderHistoryItem(item, item._type))
           )}
         </div>
       </div>
