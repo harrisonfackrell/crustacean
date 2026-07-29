@@ -37,7 +37,7 @@ function getCommentsForPost(getDb, postId, sort = 'hot') {
   const map = {};
 
   comments.forEach(c => {
-    c.avatar = getDb().get('SELECT name, handle FROM Avatars WHERE id = ?', [c.avatar_id]);
+    c.avatar = getDb().get('SELECT id, name, handle FROM Avatars WHERE id = ?', [c.avatar_id]);
     c.upvotes = getVoteCount(getDb, 'comment', c.id, 1);
     c.downvotes = getVoteCount(getDb, 'comment', c.id, -1);
     c.hotness = calculateHotness(c.upvotes, c.downvotes, 0, c.created_at);

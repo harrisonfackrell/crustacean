@@ -8,17 +8,22 @@ function AvatarActionModal({
   onClose,
   showLength = false,
   extraContextPlaceholder = 'Add any additional context for the LLM...',
+  showTitleField = false,
+  titleFieldLabel = 'Title (optional - LLM will generate one if left blank)',
+  titleFieldPlaceholder = 'Enter a title...',
+  initialTitle = '',
 }) {
   const [selectedAvatar, setSelectedAvatar] = useState(null);
   const [extraContext, setExtraContext] = useState('');
   const [length, setLength] = useState(3);
   const [generating, setGenerating] = useState(false);
+  const [inputTitle, setInputTitle] = useState(initialTitle);
 
   const handleAction = async () => {
     if (!selectedAvatar) return;
     setGenerating(true);
     try {
-      await onAction({ selectedAvatar, extraContext, length });
+      await onAction({ selectedAvatar, extraContext, length, inputTitle });
     } finally {
       setGenerating(false);
     }
@@ -39,10 +44,16 @@ function AvatarActionModal({
                 className={`avatar-option ${selectedAvatar === a.id ? 'selected' : ''}`}
                 onClick={() => setSelectedAvatar(a.id)}
               >
-                {a.name} (u/{a.handle})
+                u/{a.handle}
               </div>
             ))}
           </div>
+          {showTitleField && (
+            <div className="form-group" style={{ marginTop: '16px' }}>
+              <label>{titleFieldLabel}</label>
+              <input value={inputTitle} onChange={e => setInputTitle(e.target.value)} placeholder={titleFieldPlaceholder} />
+            </div>
+          )}
           <div className="form-group" style={{ marginTop: '16px' }}>
             <label>Extra Context (optional)</label>
             <textarea

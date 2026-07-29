@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import PostCard from '../components/PostCard';
+import AvatarActionModal from '../components/AvatarActionModal';
 import { useInteract } from '../hooks/useInteract';
 
 function CommunityPage({ id: idProp }) {
@@ -20,11 +21,6 @@ function CommunityPage({ id: idProp }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [globalRules, setGlobalRules] = useState([]);
   const [postModal, setPostModal] = useState(false);
-  const [selectedAvatar, setSelectedAvatar] = useState(null);
-  const [postTitle, setPostTitle] = useState('');
-  const [extraContext, setExtraContext] = useState('');
-  const [length, setLength] = useState(3);
-  const [generating, setGenerating] = useState(false);
   const [sort, setSort] = useState('top');
 
   useEffect(() => {
@@ -202,21 +198,14 @@ function CommunityPage({ id: idProp }) {
     }
   };
 
-  const handlePost = async () => {
-    if (!selectedAvatar) return;
-    setGenerating(true);
+  const handlePost = async ({ selectedAvatar, extraContext, length, inputTitle }) => {
     try {
-      const result = await api.generatePost({ avatar_id: selectedAvatar, community_id: id, extra_context: extraContext, title: postTitle, length });
+      const result = await api.generatePost({ avatar_id: selectedAvatar, community_id: id, extra_context: extraContext, title: inputTitle, length });
       await api.createPost({ community_id: id, avatar_id: selectedAvatar, title: result.title, content: result.content });
       setPostModal(false);
-      setSelectedAvatar(null);
-      setPostTitle('');
-      setExtraContext('');
       loadCommunity();
     } catch (err) {
       console.error('Failed to post:', err);
-    } finally {
-      setGenerating(false);
     }
   };
 
@@ -474,7 +463,7 @@ function CommunityPage({ id: idProp }) {
         {!isPseudoCommunity && (
           <button
             className="primary"
-            onClick={() => { setPostModal(true); setSelectedAvatar(null); setPostTitle(''); setExtraContext(''); setLength(3); }}
+            onClick={() => setPostModal(true)}
             style={{ whiteSpace: 'nowrap' }}
           >
             📝 Post
@@ -494,45 +483,16 @@ function CommunityPage({ id: idProp }) {
 
       {/* Post Modal */}
       {postModal && (
-        <div className="modal-overlay" onClick={() => setPostModal(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Select Avatar to Post</h3>
-              <button onClick={() => setPostModal(false)}>✕</button>
-            </div>
-            <div className="modal-body">
-              <div className="avatar-selector">
-                {avatars.map(a => (
-                  <div
-                    key={a.id}
-                    className={`avatar-option ${selectedAvatar === a.id ? 'selected' : ''}`}
-                    onClick={() => setSelectedAvatar(a.id)}
-                  >
-                    u/{a.handle}
-                  </div>
-                ))}
-              </div>
-              <div className="form-group" style={{ marginTop: '16px' }}>
-                <label>Title (optional - LLM will generate one if left blank)</label>
-                <input value={postTitle} onChange={e => setPostTitle(e.target.value)} placeholder="Enter a title for the post..." />
-              </div>
-              <div className="form-group" style={{ marginTop: '16px' }}>
-                <label>Extra Context (optional)</label>
-                <textarea value={extraContext} onChange={e => setExtraContext(e.target.value)} placeholder="Add any additional context for the LLM..." />
-              </div>
-              <div className="form-group" style={{ marginTop: '16px' }}>
-                <label>Length: {length}</label>
-                <input type="range" min="1" max="10" value={length} onChange={e => setLength(Number(e.target.value))} style={{ width: '100%' }} />
-              </div>
-              <div className="form-actions">
-                <button className="primary" onClick={handlePost} disabled={!selectedAvatar || generating}>
-                  {generating ? 'Generating...' : 'Post'}
-                </button>
-                <button className="secondary" onClick={() => setPostModal(false)}>Cancel</button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <AvatarActionModal
+          avatars={avatars}
+          title="Select Avatar to Post"
+          actionLabel="Post"
+          onAction={handlePost}
+          onClose={() => setPostModal(false)}
+          showLength={true}
+          showTitleField={true}
+          titleFieldPlaceholder="Enter a title for the post..."
+        />
       )}
     </div>
   );
