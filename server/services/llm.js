@@ -226,7 +226,7 @@ Your evaluation (-10 to 10):
       1: 'Keep your contribution very brief — just 1 short paragraph.',
       2: 'Keep your contribution brief — about 1 to 2 short paragraphs, each of which should be 5 to 7 sentences in length.',
       3: 'Write a concise contribution — about 2 to 3 paragraphs, each of which should be 5 to 7 sentences in length.',
-      4: 'Write a moderate contribution — about 2 to 4 paragraphs, each of which should be 5 to 7 sentences in length.',
+      4: 'Write a moderate contribution — about 3 to 4 paragraphs, each of which should be 5 to 7 sentences in length.',
       5: 'Write a well-developed contribution — about 3 to 5 paragraphs, each of which should be 5 to 7 sentences in length.',
       6: 'Write a detailed contribution — about 4 to 6 paragraphs, each of which should be 5 to 7 sentences in length.',
       7: 'Write a thorough contribution — about 5 to 7 paragraphs, each of which should be 5 to 7 sentences in length.',

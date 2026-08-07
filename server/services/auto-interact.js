@@ -691,33 +691,32 @@ class AutoInteractService {
   }
   
   /**
-   * Generate a random comment length (1-10) following a distribution centered around 3.
-   * Most posts will be length 3, with values divergent from that growing rarer.
-   * Uses inverse probability weighting: higher weights for lengths near 3.
+   * Generate a random comment length (1-10) following a distribution where
+   * length 1 is the most common. About 30% of values are greater than 4.
+   * All weights sum to exactly 1.
    */
   _randomLength() {
-    // Weights heavily favoring length 3, tapering off symmetrically
+    // Weights: length 1 is most common (~22%), ~30% for lengths > 4
     const weights = [
-      0.02,  // length 1 - very rare
-      0.05,  // length 2 - uncommon
-      0.40,  // length 3 - most common (center)
-      0.25,  // length 4 - moderate
-      0.12,  // length 5 - less common
-      0.06,  // length 6 - rare
-      0.03,  // length 7 - very rare
-      0.02,  // length 8 - extremely rare
-      0.02,  // length 9 - extremely rare
-      0.01   // length 10 - almost never
+      0.22,  // length 1 - most common
+      0.18,  // length 2
+      0.17,  // length 3
+      0.12,  // length 4
+      0.10,  // length 5
+      0.07,  // length 6
+      0.05,  // length 7
+      0.04,  // length 8
+      0.03,  // length 9
+      0.02   // length 10 - rarest
     ];
-  
-    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-    let r = Math.random() * totalWeight;
-  
+
+    let r = Math.random();
+
     for (let i = 0; i < weights.length; i++) {
       r -= weights[i];
       if (r <= 0) return i + 1; // Convert 0-index to 1-10 length
     }
-  
+
     return weights.length; // Fallback to max length
   }
 }
