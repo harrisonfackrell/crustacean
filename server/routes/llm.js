@@ -48,14 +48,20 @@ router.post('/llm/generate-comment', async (req, res) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
     community = getDb().get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
     targetAvatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
-    context = `Post content: ${post.content}`;
+    const postAvatar = targetAvatar;
+    context = `--- Post by ${postAvatar?.name} (@${postAvatar?.handle}) ---\n`;
+    if (post.title) context += `Title: ${post.title}\n`;
+    context += `Content: ${post.content}`;
   } else if (target_type === 'comment') {
     const comment = getDb().get('SELECT * FROM Comments WHERE id = ?', [target_id]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
     const post = getDb().get('SELECT * FROM Posts WHERE id = ?', [comment.post_id]);
     community = getDb().get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
     targetAvatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [comment.avatar_id]);
-    context = `Post content: ${post.content}\nComment content: ${comment.content}`;
+
+    // Build the full thread chain from root post up to the target comment
+    const chain = buildCommentChain(getDb(), comment);
+    context = buildThreadContext(chain);
   }
 
   const globalRules = getDb().all('SELECT rule FROM GlobalRules');
@@ -67,6 +73,86 @@ router.post('/llm/generate-comment', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+/**
+ * Walk up the comment tree from a given comment to the root post,
+ * collecting each node in order (root post first, then each parent comment,
+ * ending with the target comment).
+ */
+function buildCommentChain(db, comment) {
+  const chain = [];
+  let current = comment;
+
+  // Walk up to find the root post
+  while (current.parent_comment_id !== null) {
+    current = db.get('SELECT * FROM Comments WHERE id = ?', [current.parent_comment_id]);
+    if (!current) break;
+  }
+
+  // current should now be a top-level comment (parent_comment_id IS NULL)
+  // Add the root post first
+  const post = db.get('SELECT * FROM Posts WHERE id = ?', [comment.post_id]);
+  if (post) {
+    const postAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
+    chain.push({ type: 'post', data: post, avatar: postAvatar });
+  }
+
+  // Now walk down from the top-level comment to the target comment
+  const path = findPathToComment(db, comment, post);
+  chain.push(...path);
+
+  return chain;
+}
+
+/**
+ * Find the path from the root post to the target comment,
+ * returning each intermediate comment with its avatar.
+ */
+function findPathToComment(db, targetComment, post) {
+  const path = [];
+  const ancestors = [];
+
+  // Collect ancestors from target up to top-level
+  let current = targetComment;
+  while (current) {
+    ancestors.unshift(current);
+    if (current.parent_comment_id === null) break;
+    current = db.get('SELECT * FROM Comments WHERE id = ?', [current.parent_comment_id]);
+  }
+
+  // Add each ancestor with its avatar
+  for (const c of ancestors) {
+    const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [c.avatar_id]);
+    path.push({ type: 'comment', data: c, avatar });
+  }
+
+  return path;
+}
+
+/**
+ * Format a chain of post + comments into a readable context string
+ * with author attribution and indentation showing thread depth.
+ */
+function buildThreadContext(chain) {
+  let context = '';
+
+  for (let i = 0; i < chain.length; i++) {
+    const item = chain[i];
+
+    if (item.type === 'post') {
+      context += `--- Post by ${item.avatar?.name} (@${item.avatar?.handle}) ---\n`;
+      if (item.data.title) context += `Title: ${item.data.title}\n`;
+      context += `Content: ${item.data.content}\n`;
+    } else if (item.type === 'comment') {
+      const depth = i - 1; // 0 for first comment (top-level), 1 for reply, etc.
+      const indent = '  '.repeat(depth);
+      context += `${indent}--- Comment by ${item.avatar?.name} (@${item.avatar?.handle}) ---\n`;
+      context += `${indent}Content: ${item.data.content}\n`;
+    }
+  }
+
+  return context.trim();
+}
 
 router.post('/llm/generate-vote', async (req, res) => {
   const { avatar_id, target_type, target_id } = req.body;

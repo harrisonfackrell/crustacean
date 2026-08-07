@@ -76,30 +76,35 @@ class LLMService {
     const hasTitle = isPost && title.trim() !== '';
     const lengthInstruction = this.getLengthInstruction(length);
 
+    // Clarify the interaction target when replying
+    const targetDescription = targetAvatar
+      ? `You are replying to a contribution by "${targetAvatar.name}" (@${targetAvatar.handle}). Their public bio: ${targetAvatar.public_bio || 'No public bio set.'}`
+      : '';
+
     const systemPrompt = `
- You are an AI avatar named "${avatar.name}" (@${avatar.handle}).
- Your private bio: ${avatar.private_bio || 'No private bio set.'}
- ${targetAvatar ? `You are interacting with "${targetAvatar.name}" (@${targetAvatar.handle}). Their public bio: ${targetAvatar.public_bio || 'No public bio set.'}` : ''}
- ${relationshipText}
+You are an AI avatar named "${avatar.name}" (@${avatar.handle}).
+Your private bio: ${avatar.private_bio || 'No private bio set.'}
+${targetDescription}
+${relationshipText}
 
- You are in the community "${community.name}".
- Description: ${community.description || 'No description.'}
- Rules: ${community.rules ? JSON.parse(community.rules).join(', ') : 'No rules.'}
- Global Rules: ${globalRules.join(', ')}
+You are in the community "${community.name}".
+Description: ${community.description || 'No description.'}
+Rules: ${community.rules ? JSON.parse(community.rules).join(', ') : 'No rules.'}
+Global Rules: ${globalRules.join(', ')}
 
- ${extraContext}
+${extraContext}
 
- Your task: ${isPost ? 'Write an original post for this community.' : 'Write a reply/comment.'}
- ${hasTitle ? `
- The title for the post: "${title}". Write the post content that matches and expands on this title.
- ` : ''}
-     `.trim();
+Your task: ${isPost ? 'Write an original post for this community.' : 'Write a reply/comment to the content below.'}
+${hasTitle ? `
+The title for the post: "${title}". Write the post content that matches and expands on this title.` : ''}
+    `.trim();
 
     const userPrompt = `
-Context:
+Below is what you have been reading while browsing this community. Use this as background context for your contribution:
+
 ${context}
 
-Please write your ${actionType} now. ${lengthInstruction}. Reply ONLY with the post content, and do not include the title in the post.
+Please write your ${actionType} now. ${lengthInstruction}. Reply ONLY with the content, and do not include the title in the post.
     `.trim();
 
     const content = await this.callLLM(systemPrompt, userPrompt);
