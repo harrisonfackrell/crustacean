@@ -562,6 +562,7 @@ class AutoInteractService {
 
     try {
       const targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
+      const targetText = post.title ? `${post.title}\n${post.content}` : (post.content || '');
       const content = await llm.generateContent(
         'comment',
         avatar,
@@ -571,7 +572,7 @@ class AutoInteractService {
         context,
         '',
         '',
-        this._randomLength()
+        this._biasedReplyLength(targetText)
       );
 
       db.run(
@@ -620,7 +621,7 @@ class AutoInteractService {
         context,
         '',
         '',
-        this._randomLength()
+        this._biasedReplyLength(comment.content)
       );
 
       db.run(
@@ -691,13 +692,12 @@ class AutoInteractService {
   }
   
   /**
-   * Generate a random comment length (1-10) following a distribution where
-   * length 1 is the most common. About 30% of values are greater than 4.
+   * Base weight distribution for content length (1-10).
+   * Length 1 is the most common (~22%), ~30% for lengths > 4.
    * All weights sum to exactly 1.
    */
-  _randomLength() {
-    // Weights: length 1 is most common (~22%), ~30% for lengths > 4
-    const weights = [
+  _lengthWeights() {
+    return [
       0.22,  // length 1 - most common
       0.18,  // length 2
       0.17,  // length 3
@@ -709,16 +709,77 @@ class AutoInteractService {
       0.03,  // length 9
       0.02   // length 10 - rarest
     ];
+  }
+
+  /**
+   * Generate a random length (1-10) using the base distribution.
+   * Used when there is no target content to bias toward (e.g. new posts).
+   */
+  _randomLength() {
+    const weights = this._lengthWeights();
 
     let r = Math.random();
 
     for (let i = 0; i < weights.length; i++) {
       r -= weights[i];
-      if (r <= 0) return i + 1; // Convert 0-index to 1-10 length
+      if (r <= 0) return i + 1;
     }
 
-    return weights.length; // Fallback to max length
+    return weights.length;
   }
+
+  /**
+   * Estimate the "length scale" (1-10) of a piece of text based on its
+   * sentence count, matching the qualitative buckets used by getLengthInstruction().
+   */
+  _estimateContentLength(text) {
+    if (!text || text.trim() === '') return 1;
+
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0).length;
+
+    if (sentences <= 1) return 1;
+    if (sentences <= 4) return 2;
+    if (sentences <= 10) return 3;
+    if (sentences <= 16) return 4;
+    if (sentences <= 24) return 5;
+    if (sentences <= 34) return 6;
+    if (sentences <= 46) return 7;
+    if (sentences <= 58) return 8;
+    if (sentences <= 70) return 9;
+    return 10;
+  }
+
+  /**
+   * Generate a length (1-10) biased toward the target content's estimated length.
+   * Multiplies the base distribution by a Gaussian kernel centered on the
+   * target length, so the result clusters near the target while retaining
+   * the natural left-skew of the base distribution.
+   *
+   * @param {string} targetText - The text being replied to
+   * @param {number} [sigma=1.5] - Spread of the bias; lower = tighter clustering
+   */
+  _biasedReplyLength(targetText, sigma = 1.5) {
+    const targetLen = this._estimateContentLength(targetText);
+    const base = this._lengthWeights();
+
+    const biased = base.map((w, i) => {
+      const length = i + 1;
+      const dist = length - targetLen;
+      return w * Math.exp(-(dist * dist) / (2 * sigma * sigma));
+    });
+
+    const total = biased.reduce((sum, w) => sum + w, 0);
+    const normalized = biased.map(w => w / total);
+
+    let r = Math.random();
+    for (let i = 0; i < normalized.length; i++) {
+      r -= normalized[i];
+      if (r <= 0) return i + 1;
+    }
+
+    return normalized.length;
+  }
+
 }
 
 let instance = null;
