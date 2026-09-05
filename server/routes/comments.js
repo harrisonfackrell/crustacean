@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDatabase } = require('../db');
+const { estimateLengthScale } = require('../utils/lengthScale');
 
 function getDb() {
   return getDatabase();
@@ -20,9 +21,10 @@ router.post('/comments', (req, res) => {
   if (existingComment) {
     return res.status(409).json({ error: 'Avatar has already replied here' });
   }
+  const lengthScale = estimateLengthScale(content);
   getDb().run(
-    'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
-    [post_id, parent_comment_id || null, avatar_id, content]
+    'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content, length_scale) VALUES (?, ?, ?, ?, ?)',
+    [post_id, parent_comment_id || null, avatar_id, content, lengthScale]
   );
   const id = getDb().lastInsertRowid();
   res.json({ id });

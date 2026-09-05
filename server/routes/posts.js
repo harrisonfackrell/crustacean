@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDatabase } = require('../db');
 const { getVoteCount, getCommentCount, getCommentsForPost, calculateHotness } = require('./helpers');
+const { estimateLengthScale } = require('../utils/lengthScale');
 
 function getDb() {
   return getDatabase();
@@ -35,9 +36,10 @@ router.post('/posts', (req, res) => {
   if (!community_id || !avatar_id || !content) {
     return res.status(400).json({ error: 'community_id, avatar_id, and content are required' });
   }
+  const lengthScale = estimateLengthScale(title ? `${title}\n${content}` : content);
   getDb().run(
-    'INSERT INTO Posts (community_id, avatar_id, title, content) VALUES (?, ?, ?, ?)',
-    [community_id, avatar_id, title || '', content]
+    'INSERT INTO Posts (community_id, avatar_id, title, content, length_scale) VALUES (?, ?, ?, ?, ?)',
+    [community_id, avatar_id, title || '', content, lengthScale]
   );
   const id = getDb().lastInsertRowid();
   res.json({ id });

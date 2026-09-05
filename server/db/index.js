@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const initSqlJs = require('sql.js');
+const { estimateLengthScale } = require('../utils/lengthScale');
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS Avatars (
@@ -29,6 +30,7 @@ const SCHEMA = `
     avatar_id INTEGER NOT NULL,
     title TEXT DEFAULT '',
     content TEXT NOT NULL,
+    length_scale INTEGER DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (community_id) REFERENCES Communities(id) ON DELETE CASCADE,
     FOREIGN KEY (avatar_id) REFERENCES Avatars(id) ON DELETE CASCADE
@@ -40,6 +42,7 @@ const SCHEMA = `
     parent_comment_id INTEGER DEFAULT NULL,
     avatar_id INTEGER NOT NULL,
     content TEXT NOT NULL,
+    length_scale INTEGER DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (post_id) REFERENCES Posts(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_comment_id) REFERENCES Comments(id) ON DELETE CASCADE,
@@ -179,6 +182,36 @@ class Database {
           this.db.run('DROP TABLE Comments');
           this.db.run('ALTER TABLE Comments_new RENAME TO Comments');
           this.db.run('COMMIT');
+        }
+      } catch (e) {
+        // Migration already applied or error - ignore
+      }
+      // Migration: Add length_scale column to Posts and Comments, backfilled from content
+      try {
+        const postCols = this.db.exec('PRAGMA table_info(Posts)')[0] || { values: [] };
+        const hasPostScale = postCols.values.some(c => c[1] === 'length_scale');
+        if (!hasPostScale) {
+          this.db.run('ALTER TABLE Posts ADD COLUMN length_scale INTEGER DEFAULT 1');
+        }
+        const commentCols = this.db.exec('PRAGMA table_info(Comments)')[0] || { values: [] };
+        const hasCommentScale = commentCols.values.some(c => c[1] === 'length_scale');
+        if (!hasCommentScale) {
+          this.db.run('ALTER TABLE Comments ADD COLUMN length_scale INTEGER DEFAULT 1');
+        }
+        // Backfill length_scale from content for all existing rows
+        const postRows = this.db.exec('SELECT id, title, content FROM Posts');
+        if (postRows.length > 0) {
+          for (const [id, title, content] of postRows[0].values) {
+            const scale = estimateLengthScale(title ? `${title}\n${content}` : content);
+            this.db.run('UPDATE Posts SET length_scale = ? WHERE id = ?', [scale, id]);
+          }
+        }
+        const commentRows = this.db.exec('SELECT id, content FROM Comments');
+        if (commentRows.length > 0) {
+          for (const [id, content] of commentRows[0].values) {
+            const scale = estimateLengthScale(content);
+            this.db.run('UPDATE Comments SET length_scale = ? WHERE id = ?', [scale, id]);
+          }
         }
       } catch (e) {
         // Migration already applied or error - ignore

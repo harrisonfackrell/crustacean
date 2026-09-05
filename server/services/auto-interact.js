@@ -2,6 +2,7 @@ const { getDatabase } = require('../db');
 const { getLLMService } = require('../services/llm');
 const { updateRelationship } = require('../utils/relationships');
 const { calculateHotness } = require('../utils/hotness');
+const { estimateLengthScale } = require('../utils/lengthScale');
 
 /**
  * Auto-Interact Service
@@ -527,10 +528,11 @@ class AutoInteractService {
       // result is { title, content } from generateContent for posts
       const title = result.title || '';
       const content = result.content || result;
+      const lengthScale = estimateLengthScale(title ? `${title}\n${content}` : content);
 
       db.run(
-        'INSERT INTO Posts (community_id, avatar_id, title, content) VALUES (?, ?, ?, ?)',
-        [community.id, avatar.id, title, content]
+        'INSERT INTO Posts (community_id, avatar_id, title, content, length_scale) VALUES (?, ?, ?, ?, ?)',
+        [community.id, avatar.id, title, content, lengthScale]
       );
 
       this._logAction(avatar.id, `create_post:${community.id}`);
@@ -562,7 +564,6 @@ class AutoInteractService {
 
     try {
       const targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
-      const targetText = post.title ? `${post.title}\n${post.content}` : (post.content || '');
       const content = await llm.generateContent(
         'comment',
         avatar,
@@ -572,12 +573,13 @@ class AutoInteractService {
         context,
         '',
         '',
-        this._biasedReplyLength(targetText)
+        this._biasedReplyLength(post)
       );
+      const lengthScale = estimateLengthScale(content);
 
       db.run(
-        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
-        [post.id, null, avatar.id, content]
+        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content, length_scale) VALUES (?, ?, ?, ?, ?)',
+        [post.id, null, avatar.id, content, lengthScale]
       );
 
       this._logAction(avatar.id, actionKey);
@@ -621,12 +623,13 @@ class AutoInteractService {
         context,
         '',
         '',
-        this._biasedReplyLength(comment.content)
+        this._biasedReplyLength(comment)
       );
+      const lengthScale = estimateLengthScale(content);
 
       db.run(
-        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content) VALUES (?, ?, ?, ?)',
-        [post.id, comment.id, avatar.id, content]
+        'INSERT INTO Comments (post_id, parent_comment_id, avatar_id, content, length_scale) VALUES (?, ?, ?, ?, ?)',
+        [post.id, comment.id, avatar.id, content, lengthScale]
       );
 
       this._logAction(avatar.id, actionKey);
@@ -729,37 +732,28 @@ class AutoInteractService {
   }
 
   /**
-   * Estimate the "length scale" (1-10) of a piece of text based on its
-   * sentence count, matching the qualitative buckets used by getLengthInstruction().
-   */
-  _estimateContentLength(text) {
-    if (!text || text.trim() === '') return 1;
-
-    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0).length;
-
-    if (sentences <= 1) return 1;
-    if (sentences <= 4) return 2;
-    if (sentences <= 10) return 3;
-    if (sentences <= 16) return 4;
-    if (sentences <= 24) return 5;
-    if (sentences <= 34) return 6;
-    if (sentences <= 46) return 7;
-    if (sentences <= 58) return 8;
-    if (sentences <= 70) return 9;
-    return 10;
-  }
-
-  /**
-   * Generate a length (1-10) biased toward the target content's estimated length.
-   * Multiplies the base distribution by a Gaussian kernel centered on the
-   * target length, so the result clusters near the target while retaining
-   * the natural left-skew of the base distribution.
+   * Generate a length (1-10) biased toward the target content's stored length
+   * scale (Posts.length_scale / Comments.length_scale). Multiplies the base
+   * distribution by a Gaussian kernel centered on the target length, so the
+   * result clusters near the target while retaining the natural left-skew of
+   * the base distribution.
    *
-   * @param {string} targetText - The text being replied to
+   * Falls back to estimating the scale from the content text if no stored
+   * value is available (e.g. rows created before the column existed).
+   *
+   * @param {{length_scale?: number, title?: string, content?: string}} target - The post or comment being replied to
    * @param {number} [sigma=1.5] - Spread of the bias; lower = tighter clustering
    */
-  _biasedReplyLength(targetText, sigma = 1.5) {
-    const targetLen = this._estimateContentLength(targetText);
+  _biasedReplyLength(target, sigma = 1.5) {
+    let targetLen = Number(target && target.length_scale);
+    if (!targetLen || targetLen < 1) {
+      const text = target
+        ? (target.title ? `${target.title}\n${target.content}` : target.content)
+        : '';
+      targetLen = estimateLengthScale(text);
+    }
+    targetLen = Math.max(1, Math.min(10, Math.round(targetLen)));
+
     const base = this._lengthWeights();
 
     const biased = base.map((w, i) => {
