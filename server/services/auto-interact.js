@@ -522,7 +522,7 @@ class AutoInteractService {
         `You are in the community r/${community.name}.`,
         '',
         '',
-        this._randomLength()
+        this._randomPostLength()
       );
 
       // result is { title, content } from generateContent for posts
@@ -573,7 +573,7 @@ class AutoInteractService {
         context,
         '',
         '',
-        this._biasedReplyLength(post)
+        this._randomLength()
       );
       const lengthScale = estimateLengthScale(content);
 
@@ -695,8 +695,10 @@ class AutoInteractService {
   }
   
   /**
-   * Base weight distribution for content length (1-10).
-   * Length 1 is the most common (~22%), ~30% for lengths > 4.
+   * Base weight distribution for comment length (1-10).
+   * Left-skewed: length 1 is the most common (~22%), ~30% for lengths > 4.
+   * Used for all comment generation (top-level comments use it directly;
+   * sub-comments bias toward the parent's length on top of it).
    * All weights sum to exactly 1.
    */
   _lengthWeights() {
@@ -715,11 +717,49 @@ class AutoInteractService {
   }
 
   /**
-   * Generate a random length (1-10) using the base distribution.
-   * Used when there is no target content to bias toward (e.g. new posts).
+   * Post-specific weight distribution for content length (1-10).
+   * Unimodal with a mode of 6, making longer posts more likely than in the
+   * base comment distribution. All weights sum to exactly 1.
+   */
+  _postLengthWeights() {
+    return [
+      0.02,  // length 1
+      0.04,  // length 2
+      0.06,  // length 3
+      0.09,  // length 4
+      0.15,  // length 5
+      0.23,  // length 6 - mode
+      0.17,  // length 7
+      0.11,  // length 8
+      0.07,  // length 9
+      0.06   // length 10
+    ];
+  }
+
+  /**
+   * Generate a random length (1-10) using the comment base distribution.
+   * Used for top-level comments and as the base for biased sub-comment
+   * lengths.
    */
   _randomLength() {
     const weights = this._lengthWeights();
+
+    let r = Math.random();
+
+    for (let i = 0; i < weights.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return i + 1;
+    }
+
+    return weights.length;
+  }
+
+  /**
+   * Generate a random length (1-10) using the post-specific distribution
+   * (mode 6), which favors longer content than the comment distribution.
+   */
+  _randomPostLength() {
+    const weights = this._postLengthWeights();
 
     let r = Math.random();
 
