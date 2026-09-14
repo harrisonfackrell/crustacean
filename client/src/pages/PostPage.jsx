@@ -133,7 +133,7 @@ function PostPage() {
           comment={comment}
           avatars={avatars}
           onVote={(commentId, avatarId) => voteOnComment(commentId, avatarId)}
-          onComment={(commentId, length, avatarId) => commentOnComment(id, commentId, avatarId, length)}
+          onComment={(commentId, extraContext, length, avatarId) => commentOnComment(id, commentId, avatarId, extraContext, length)}
           onDelete={handleDeleteComment}
         />
       ))}

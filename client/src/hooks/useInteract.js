@@ -47,10 +47,10 @@ export function useInteract(onReload) {
     }
   };
 
-  const commentOnComment = async (postId, commentId, selectedAvatar, length) => {
+  const commentOnComment = async (postId, commentId, selectedAvatar, extraContext, length) => {
     setGenerating(true);
     try {
-      const result = await api.generateComment({ avatar_id: selectedAvatar, target_type: 'comment', target_id: commentId, length });
+      const result = await api.generateComment({ avatar_id: selectedAvatar, target_type: 'comment', target_id: commentId, extra_context: extraContext, length });
       await api.createComment({ post_id: postId, parent_comment_id: commentId, avatar_id: selectedAvatar, content: result.content });
       await onReload();
     } catch (err) {

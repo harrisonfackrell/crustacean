@@ -13,8 +13,8 @@ function CommentItem({ comment, avatars, onVote, onComment, onDelete }) {
     setModal(null);
   };
 
-  const handleComment = async ({ selectedAvatar, length }) => {
-    await onComment(comment.id, length, selectedAvatar);
+  const handleComment = async ({ selectedAvatar, extraContext, length }) => {
+    await onComment(comment.id, extraContext, length, selectedAvatar);
     setModal(null);
   };
 
