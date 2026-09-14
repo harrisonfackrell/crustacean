@@ -23,6 +23,17 @@ class AutoInteractService {
     this.llm = null;
     this.running = false;
     this.abortFlag = false;
+    // Round-robin turn counter so every avatar gets an equal, guaranteed
+    // number of browsing sessions. Pure random selection (as used previously)
+    // produces large short-window variance: with a handful of avatars one can
+    // easily go many minutes without a single session while others rack up
+    // a dozen contributions.
+    this.turn = 0;
+    // Hard cap on actions (votes + comments + post creations) a single avatar
+    // may perform in one session. Without this, a session that hits a hot,
+    // heavily-commented post can consume a large share of LLM work, starving
+    // the avatars waiting for their turn.
+    this.MAX_ACTIONS_PER_TURN = 8;
     // Track which avatars have already acted on which nodes this cycle
     // to prevent duplicate actions within a single processAvatar call
     this.actionLog = new Map(); // avatarId -> Set of "type:id" strings
@@ -95,12 +106,15 @@ class AutoInteractService {
 
     const globalRules = db.all('SELECT rule FROM GlobalRules').map(r => r.rule);
 
-    // Pick a random avatar to process this iteration
-    const avatar = avatars[Math.floor(Math.random() * avatars.length)];
+    // Pick the next avatar in round-robin order (stable ordering by id),
+    // guaranteeing an even spread of sessions across all avatars.
+    const ordered = [...avatars].sort((a, b) => a.id - b.id);
+    const avatar = ordered[this.turn % ordered.length];
+    this.turn += 1;
 
     this.actionLog.clear();
 
-    this.processAvatar(avatar, communities, globalRules)
+    this.processAvatar(avatar, communities, globalRules, this.MAX_ACTIONS_PER_TURN)
       .then(() => {
         setImmediate(() => this._runLoop());
       })
@@ -115,10 +129,19 @@ class AutoInteractService {
    * Process a single avatar's browsing session.
    * The avatar walks the tree: picks a community, may create a post,
    * browses existing posts, votes on everything, and may comment.
+   *
+   * @param {number} [maxActions] - Cap on the number of LLM-driven actions
+   * (votes, comments, post creations) this session may perform. Keeps any
+   * single session from monopolizing LLM throughput at the expense of the
+   * other avatars in the round.
    */
-  async processAvatar(avatar, communities = null, globalRules = null) {
+  async processAvatar(avatar, communities = null, globalRules = null, maxActions = this.MAX_ACTIONS_PER_TURN) {
     const db = this.getDb();
     const llm = this.getLLM();
+
+    // Per-session action budget. Mutated in place as actions are taken;
+    // action methods stop doing work once it reaches zero.
+    const budget = { remaining: maxActions };
 
     if (!communities) {
       communities = db.all('SELECT * FROM Communities');
@@ -157,7 +180,7 @@ class AutoInteractService {
     // --- Phase 0: Maybe create a new post in this community ---
     // ~25% chance the avatar creates a new post instead of just browsing
     if (Math.random() < 0.25) {
-      await this._maybeCreatePost(llm, avatar, community, globalRules);
+      await this._maybeCreatePost(llm, avatar, community, globalRules, budget);
     }
 
     // Get posts in this community, sorted by hotness
@@ -169,7 +192,7 @@ class AutoInteractService {
     const postsToVisit = Math.min(3, posts.length);
     const visitedPosts = new Set();
 
-    for (let visit = 0; visit < postsToVisit && !this.abortFlag; visit++) {
+    for (let visit = 0; visit < postsToVisit && !this.abortFlag && budget.remaining > 0; visit++) {
       // Choose a post — weighted toward hotness but with exploration
       const post = this._weightedPostSelect(posts, visitedPosts);
       if (!post) break;
@@ -182,25 +205,25 @@ class AutoInteractService {
       const context = this._buildSessionContext(avatar, visitedPosts, community);
 
       // --- Phase 1: Vote on the post ---
-      await this._voteOnPost(llm, avatar, post, community, globalRules, context);
+      await this._voteOnPost(llm, avatar, post, community, globalRules, context, budget);
 
       // --- Phase 2: Process all comments (vote on each, recursively) ---
       for (const comment of commentTree) {
-        if (this.abortFlag) break;
-        await this._processCommentNode(llm, avatar, comment, post, community, globalRules, context);
+        if (this.abortFlag || budget.remaining <= 0) break;
+        await this._processCommentNode(llm, avatar, comment, post, community, globalRules, context, budget);
       }
 
       // --- Phase 3: Comment on the post (skip own posts) ---
-      if (post.avatar_id !== avatar.id) {
-        await this._maybeCommentOnPost(llm, avatar, post, community, globalRules, context);
+      if (post.avatar_id !== avatar.id && budget.remaining > 0) {
+        await this._maybeCommentOnPost(llm, avatar, post, community, globalRules, context, budget);
       }
 
       // --- Phase 4: Reply to a comment in the tree (skip own comments) ---
-      {
+      if (budget.remaining > 0) {
         const allComments = this._flattenCommentTree(commentTree);
         const targetComment = this._selectCommentForReply(allComments, avatar, post.id);
         if (targetComment) {
-          await this._maybeCommentOnComment(llm, avatar, targetComment, post, community, globalRules, context);
+          await this._maybeCommentOnComment(llm, avatar, targetComment, post, community, globalRules, context, budget);
         }
       }
 
@@ -432,10 +455,11 @@ class AutoInteractService {
   /**
    * Vote on a post. Always votes on everything the avatar sees.
    */
-  async _voteOnPost(llm, avatar, post, community, globalRules, context) {
+  async _voteOnPost(llm, avatar, post, community, globalRules, context, budget) {
     const db = this.getDb();
     const actionKey = `post:${post.id}`;
 
+    if (budget && budget.remaining <= 0) return;
     if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
       return; // Already voted this session
     }
@@ -460,6 +484,7 @@ class AutoInteractService {
       updateRelationship(db, avatar.id, post.avatar_id, voteValue);
 
       this._logAction(avatar.id, actionKey);
+      if (budget) budget.remaining -= 1;
     } catch (err) {
       console.error(`[AutoInteract] Vote on post ${post.id} failed:`, err.message);
     }
@@ -468,14 +493,15 @@ class AutoInteractService {
   /**
    * Recursively process a comment node: vote on it, then process its replies.
    */
-  async _processCommentNode(llm, avatar, comment, post, community, globalRules, context) {
+  async _processCommentNode(llm, avatar, comment, post, community, globalRules, context, budget) {
     const db = this.getDb();
     const actionKey = `comment:${comment.id}`;
 
     if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
       // Still process children even if we already acted on this node
       for (const reply of comment.replies || []) {
-        await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context);
+        if (budget && budget.remaining <= 0) return;
+        await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context, budget);
       }
       return;
     }
@@ -486,7 +512,7 @@ class AutoInteractService {
       [avatar.id, 'comment', comment.id]
     );
 
-    if (!existingVote) {
+    if (!existingVote && (!budget || budget.remaining > 0)) {
       try {
         const voteValue = await llm.generateVote(avatar, comment.content);
         db.run(
@@ -495,6 +521,7 @@ class AutoInteractService {
         );
         updateRelationship(db, avatar.id, comment.avatar_id, voteValue);
         this._logAction(avatar.id, actionKey);
+        if (budget) budget.remaining -= 1;
       } catch (err) {
         console.error(`[AutoInteract] Vote on comment ${comment.id} failed:`, err.message);
       }
@@ -502,15 +529,18 @@ class AutoInteractService {
 
     // Process replies
     for (const reply of comment.replies || []) {
-      await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context);
+      if (budget && budget.remaining <= 0) return;
+      await this._processCommentNode(llm, avatar, reply, post, community, globalRules, context, budget);
     }
   }
 
   /**
    * Maybe create a new post in a community.
    */
-  async _maybeCreatePost(llm, avatar, community, globalRules) {
+  async _maybeCreatePost(llm, avatar, community, globalRules, budget) {
     const db = this.getDb();
+
+    if (budget && budget.remaining <= 0) return;
 
     try {
       const result = await llm.generateContent(
@@ -536,6 +566,7 @@ class AutoInteractService {
       );
 
       this._logAction(avatar.id, `create_post:${community.id}`);
+      if (budget) budget.remaining -= 1;
     } catch (err) {
       console.error(`[AutoInteract] Create post in community ${community.id} failed:`, err.message);
     }
@@ -544,10 +575,11 @@ class AutoInteractService {
   /**
    * Maybe comment on a post (top-level comment).
    */
-  async _maybeCommentOnPost(llm, avatar, post, community, globalRules, context) {
+  async _maybeCommentOnPost(llm, avatar, post, community, globalRules, context, budget) {
     const db = this.getDb();
     const actionKey = `comment_on_post:${post.id}`;
 
+    if (budget && budget.remaining <= 0) return;
     if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
       return;
     }
@@ -583,6 +615,7 @@ class AutoInteractService {
       );
 
       this._logAction(avatar.id, actionKey);
+      if (budget) budget.remaining -= 1;
     } catch (err) {
       if (err.message.includes('Avatar has already replied')) {
         return; // Already commented
@@ -594,10 +627,11 @@ class AutoInteractService {
   /**
    * Maybe comment on a specific comment (reply).
    */
-  async _maybeCommentOnComment(llm, avatar, comment, post, community, globalRules, context) {
+  async _maybeCommentOnComment(llm, avatar, comment, post, community, globalRules, context, budget) {
     const db = this.getDb();
     const actionKey = `reply_to_comment:${comment.id}`;
 
+    if (budget && budget.remaining <= 0) return;
     if (this.actionLog.has(avatar.id) && this.actionLog.get(avatar.id).has(actionKey)) {
       return;
     }
@@ -633,6 +667,7 @@ class AutoInteractService {
       );
 
       this._logAction(avatar.id, actionKey);
+      if (budget) budget.remaining -= 1;
     } catch (err) {
       if (err.message.includes('Avatar has already replied')) {
         return; // Already replied
