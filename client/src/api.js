@@ -22,6 +22,7 @@ export const api = {
   setSetting: (key, value) => request('PUT', '/settings', { key, value }),
 
   // Auto-Interact
+  getAutoInteractStatus: () => request('GET', '/auto-interact/status'),
   startAutoInteract: () => request('POST', '/auto-interact/start'),
   stopAutoInteract: () => request('POST', '/auto-interact/stop'),
   runAutoInteractOnce: (avatarId) => request('POST', '/auto-interact/run-once', { avatar_id: avatarId }),

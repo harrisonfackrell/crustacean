@@ -1,7 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { initDatabase } = require('./db');
+const { initDatabase, getDatabase } = require('./db');
+const { getAutoInteractService } = require('./services/auto-interact');
 const apiRouter = require('./routes/api');
 
 const app = express();
@@ -27,6 +28,14 @@ async function startServer() {
     // Initialize database
     await initDatabase();
     console.log('Database initialized');
+
+    // Resume auto-interact if it was enabled before the server restarted
+    const autoSetting = getDatabase().get(
+      "SELECT value FROM Settings WHERE key = 'auto_interact_enabled'"
+    );
+    if (autoSetting && autoSetting.value === 'true') {
+      getAutoInteractService().start();
+    }
 
     app.listen(PORT, () => {
       console.log(`Crustacean server running on http://localhost:${PORT}`);

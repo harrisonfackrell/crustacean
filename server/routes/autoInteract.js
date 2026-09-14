@@ -8,6 +8,11 @@ function getDb() {
 
 const router = express.Router();
 
+router.get('/auto-interact/status', (req, res) => {
+  const autoInteract = getAutoInteractService();
+  res.json({ running: autoInteract.running });
+});
+
 router.post('/auto-interact/start', (req, res) => {
   const autoInteract = getAutoInteractService();
   autoInteract.start();

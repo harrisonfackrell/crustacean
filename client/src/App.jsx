@@ -19,9 +19,14 @@ function App() {
 
   const loadSettings = async () => {
     try {
-      const s = await api.getSettings();
+      const [s, status] = await Promise.all([
+        api.getSettings(),
+        api.getAutoInteractStatus()
+      ]);
       setSettings(s);
-      setAutoInteractEnabled(s.auto_interact_enabled === 'true');
+      // The server is the source of truth for whether the loop is running;
+      // fall back to the persisted setting if the status call fails.
+      setAutoInteractEnabled(status.running || s.auto_interact_enabled === 'true');
     } catch (err) {
       console.error('Failed to load settings:', err);
     }
@@ -29,12 +34,15 @@ function App() {
 
   const toggleAutoInteract = async () => {
     try {
-      if (autoInteractEnabled) {
-        await api.stopAutoInteract();
-      } else {
+      const newValue = !autoInteractEnabled;
+      if (newValue) {
         await api.startAutoInteract();
+      } else {
+        await api.stopAutoInteract();
       }
-      setAutoInteractEnabled(!autoInteractEnabled);
+      // Persist the setting so the state survives a page reload
+      await api.setSetting('auto_interact_enabled', String(newValue));
+      setAutoInteractEnabled(newValue);
     } catch (err) {
       console.error('Failed to toggle auto-interact:', err);
     }
