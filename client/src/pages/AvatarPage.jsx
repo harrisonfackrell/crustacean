@@ -197,7 +197,7 @@ function AvatarPage() {
             {menuOpen && (
               <>
                 <div className="modal-overlay" onClick={() => setMenuOpen(false)} />
-                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '300px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                <div className="modal menu-dropdown" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
                   <div className="modal-body" style={{ padding: '8px 8px' }}>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                       <button className="primary" style={{flex: 1}} onClick={() => { setEditing(true); setMenuOpen(false); }}>
@@ -216,7 +216,7 @@ function AvatarPage() {
             )}
           </div>
         )}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+        <div className="profile-header-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <div>
               <div className="profile-name">{avatar.name}</div>
@@ -282,7 +282,7 @@ function AvatarPage() {
       </div>
 
       {/* Friends & Foes */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
+      <div className="two-col-grid">
         <div className="card">
           <div className="card-header"><h3>Friends</h3></div>
           <div className="card-body">

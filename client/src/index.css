@@ -177,6 +177,8 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .card-body {
@@ -291,6 +293,7 @@ textarea {
   font-size: 12px;
   color: var(--color-text-muted);
   margin-bottom: 8px;
+  overflow-wrap: break-word;
 }
 
 .post-meta a {
@@ -318,6 +321,7 @@ textarea {
   gap: 8px;
   font-size: 12px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .post-actions button {
@@ -352,6 +356,7 @@ textarea {
 .comment-meta {
   font-size: 12px;
   color: var(--color-text-muted);
+  overflow-wrap: break-word;
 }
 
 .comment-meta a {
@@ -376,6 +381,7 @@ textarea {
   gap: 8px;
   font-size: 12px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .comment-actions button {
@@ -503,6 +509,7 @@ textarea {
   display: flex;
   gap: 24px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .profile-stats .profile-stat {
@@ -698,4 +705,131 @@ textarea {
   background: var(--color-primary);
   border-color: var(--color-primary);
   color: white;
+}
+
+/* Community header sort / edit controls */
+/* Desktop: pinned to bottom-right of the header card */
+.community-sort-controls {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.community-edit-form {
+  margin-top: 16px;
+  padding-bottom: 60px; /* reserves room for the pinned controls on desktop */
+}
+
+.sort-btn {
+  text-transform: capitalize;
+  font-size: 13px;
+  padding: 6px 14px;
+}
+
+/* Options menu that drops down from the ⋮ button */
+.menu-dropdown {
+  min-width: 300px;
+}
+
+/* Two-column card grid (Friends / Foes) */
+.two-col-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+/* Profile name + stats row */
+.profile-header-row {
+  flex-wrap: wrap;
+}
+
+/* ============ Responsive / mobile ============ */
+@media (max-width: 640px) {
+  .community-header-body {
+    padding: 0 16px 16px;
+  }
+
+  /* Sort / edit controls stop being absolutely positioned and flow
+     below the header content, so they never overlap text */
+  .community-sort-controls {
+    position: static;
+    margin-top: 16px;
+  }
+
+  .community-edit-form {
+    padding-bottom: 8px;
+  }
+
+  .sort-btn {
+    padding: 6px 10px;
+  }
+
+  .community-name {
+    font-size: 20px;
+  }
+
+  .profile-header {
+    padding: 16px;
+  }
+
+  .profile-name {
+    font-size: 20px;
+  }
+
+  .profile-stats {
+    gap: 12px;
+  }
+
+  .two-col-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .comment-replies {
+    padding-left: 8px;
+  }
+
+  .main-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+  }
+
+  /* Dropdown menus must not run off the left edge of the screen */
+  .menu-dropdown {
+    min-width: 0;
+    width: calc(100vw - 48px);
+  }
+
+  .menu-dropdown .modal-body button {
+    font-size: 12px;
+    padding: 6px 4px;
+  }
+}
+
+@media (max-width: 480px) {
+  .header .container {
+    gap: 8px;
+  }
+
+  .header-logo {
+    font-size: 17px;
+  }
+
+  .header-nav {
+    gap: 10px;
+  }
+
+  .header-nav a {
+    font-size: 13px;
+  }
+
+  .auto-status-label {
+    display: none;
+  }
 }

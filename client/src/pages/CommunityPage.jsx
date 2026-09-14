@@ -325,7 +325,7 @@ function CommunityPage({ id: idProp }) {
             {menuOpen && (
               <>
                 <div className="modal-overlay" onClick={() => setMenuOpen(false)} />
-                <div className="modal" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', minWidth: '300px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
+                <div className="modal menu-dropdown" style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', zIndex: 1000 }} onClick={e => e.stopPropagation()}>
                   <div className="modal-body" style={{ padding: '8px 8px' }}>
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                       <button className="primary" style={{flex: 1}} onClick={() => { setEditing(true); setMenuOpen(false); }}>
@@ -357,7 +357,7 @@ function CommunityPage({ id: idProp }) {
           </div>
 
           {editing ? (
-            <div style={{ marginTop: '16px', paddingBottom: '60px' }}>
+            <div className="community-edit-form">
               {isPseudoCommunity ? (
                 <>
                   <div className="form-group">
@@ -434,8 +434,8 @@ function CommunityPage({ id: idProp }) {
             </>
           )}
 
-          {/* Sort / Edit controls - bottom-right of header, absolutely positioned to never add vertical space */}
-          <div style={{ position: 'absolute', bottom: '24px', right: '24px', display: 'flex', justifyContent: 'flex-end', gap: '4px' }}>
+          {/* Sort / Edit controls - desktop: pinned bottom-right of header; mobile: flows below content */}
+          <div className="community-sort-controls">
             {editing ? (
               <>
                 <button className="primary" onClick={handleSave}>Save</button>
@@ -445,9 +445,8 @@ function CommunityPage({ id: idProp }) {
               ['top', 'new'].map(s => (
                 <button
                   key={s}
-                  className={sort === s ? 'primary' : 'secondary'}
+                  className={`sort-btn ${sort === s ? 'primary' : 'secondary'}`}
                   onClick={() => setSort(s)}
-                  style={{ textTransform: 'capitalize', fontSize: '13px', padding: '6px 14px' }}
                 >
                   {s === 'top' ? '📈 ' : '🕐 '}{s}
                 </button>

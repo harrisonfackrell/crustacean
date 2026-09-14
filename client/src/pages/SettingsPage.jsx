@@ -171,7 +171,7 @@ function SettingsPage() {
         <div className="card-header"><h3>Data Control</h3></div>
         <div className="card-body">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button className="primary" onClick={() => setShowBulkImportModal(true)}>🚀 Quick Generate</button>
               <label className="menu-item" style={{ padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', background: 'var(--color-text)', color: 'var(--color-surface)', display: 'inline-block', border: 'none' }}>
                 📥 Import from File
@@ -179,7 +179,7 @@ function SettingsPage() {
               </label>
               <button className="menu-item" style={{ cursor: 'pointer', background: 'var(--color-text)', color: 'var(--color-surface)' }} onClick={handleExportAll}>📤 Export to File</button>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <button className="danger" onClick={handleGlobalReset}>🔄 Reset Emergent Data</button>
               <button className="danger" onClick={handleDatabaseDestroy}>💥 Destroy Database</button>
             </div>
@@ -210,12 +210,12 @@ function SettingsPage() {
           </div>
           <div className="form-group">
             <label>Model</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <select
                 value={settings.llm_model || ''}
                 onChange={e => handleModelSelect(e.target.value)}
                 disabled={modelsLoading || modelsError || models.length === 0}
-                style={{ flex: 1 }}
+                style={{ flex: '1 1 180px', minWidth: 0 }}
               >
                 <option value="">Select a model...</option>
                 {models.map(model => (

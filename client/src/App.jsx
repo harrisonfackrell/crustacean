@@ -59,7 +59,7 @@ function App() {
               <Link to="/avatars">Avatars</Link>
               <Link to="/settings">Settings</Link>
               <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '12px', color: autoInteractEnabled ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
+                <span className="auto-status-label" style={{ fontSize: '12px', color: autoInteractEnabled ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
                   Auto: {autoInteractEnabled ? 'ON' : 'OFF'}
                 </span>
                 <div className={`toggle ${autoInteractEnabled ? 'active' : ''}`} onClick={toggleAutoInteract} />
