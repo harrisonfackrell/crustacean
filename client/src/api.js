@@ -59,15 +59,9 @@ export const api = {
   // Comments
   createComment: (data) => request('POST', '/comments', data),
   deleteComment: (id) => request('DELETE', `/comments/${id}`),
-  checkComment: (avatarId, postId, parentCommentId = null) => {
-    const params = new URLSearchParams({ parent_comment_id: parentCommentId || '' });
-    return request('GET', `/comments/check/${avatarId}/${postId}?${params}`);
-  },
 
   // Votes
   createVote: (data) => request('POST', '/votes', data),
-  getVote: (targetType, targetId, avatarId) => request('GET', `/votes/${targetType}/${targetId}/${avatarId}`),
-  getVotesOnTarget: (targetType, targetId) => request('GET', `/votes/target/${targetType}/${targetId}`),
   deleteVote: (id) => request('DELETE', `/votes/${id}`),
 
   // Global Rules

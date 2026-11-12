@@ -5,19 +5,21 @@ import PostCard from '../components/PostCard';
 import CommentItem from '../components/CommentItem';
 import AvatarActionModal from '../components/AvatarActionModal';
 import { useInteract } from '../hooks/useInteract';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 function PostPage() {
   const { id } = useParams();
   const [post, setPost] = useState(null);
   const [avatars, setAvatars] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal, setModal] = useState(null); // 'vote', 'comment', null
-  const [postVotes, setPostVotes] = useState([]); // Track votes on this post
+  const [modal, setModal] = useState(null); // 'comment', null
   const [sort, setSort] = useState('hot');
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     loadData();
-    loadPostVotes();
   }, [id, sort]);
 
   const loadData = async () => {
@@ -30,48 +32,32 @@ function PostPage() {
       setAvatars(avatarData);
     } catch (err) {
       console.error('Failed to load post:', err);
+      notify(err.message || 'Failed to load post', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPostVotes = async () => {
-    try {
-      const votes = await api.getVotesOnTarget('post', id);
-      setPostVotes(votes);
-    } catch (err) {
-      // Silently fail - votes may not exist yet
-    }
-  };
-
   const { voteOnPost, voteOnComment, commentOnPost, commentOnComment } = useInteract(() => {
     loadData();
-    loadPostVotes();
   });
 
-  const handleUnvote = async (voteId) => {
-    try {
-      await api.deleteVote(voteId);
-      loadData();
-      loadPostVotes();
-    } catch (err) {
-      console.error('Failed to unvote:', err);
-    }
-  };
-
   const handleDeletePost = async () => {
-    if (!confirm('Delete this post?')) return;
+    const ok = await confirm({
+      title: 'Delete this post?',
+      body: 'The post, its comments, and all related votes will be removed. This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deletePost(id);
+      notify('Post deleted', 'success');
       window.history.back();
     } catch (err) {
       console.error('Failed to delete post:', err);
+      notify(err.message || 'Failed to delete post', 'error');
     }
-  };
-
-  const handleVote = async ({ selectedAvatar }) => {
-    await voteOnPost(id, selectedAvatar);
-    setModal(null);
   };
 
   const handleComment = async ({ selectedAvatar, extraContext, length }) => {
@@ -80,12 +66,20 @@ function PostPage() {
   };
 
   const handleDeleteComment = async (commentId) => {
-    if (!confirm('Delete this comment?')) return;
+    const ok = await confirm({
+      title: 'Delete this comment?',
+      body: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.deleteComment(commentId);
+      notify('Comment deleted', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to delete comment:', err);
+      notify(err.message || 'Failed to delete comment', 'error');
     }
   };
 
@@ -94,6 +88,7 @@ function PostPage() {
 
   return (
     <div className="container">
+      {confirmDialog}
 
       {/* Post */}
       <PostCard
@@ -107,14 +102,14 @@ function PostPage() {
       />
 
       {/* Comments */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '16px 0 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '16px 0 8px' }}>
         <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
         <span style={{ fontSize: '13px', fontWeight: 600, color: '#64748b', whiteSpace: 'nowrap' }}>💬 {post.commentCount || 0} Comment{(post.commentCount || 0) !== 1 ? 's' : ''}</span>
         <div style={{ flex: 1, height: '1px', backgroundColor: '#e2e8f0' }} />
       </div>
 
       {/* Sort Selector for Comments */}
-      <div style={{ display: 'none', gap: '4px', margin: '0 0 16px' }}>
+      <div style={{ display: 'flex', gap: '4px', margin: '0 0 16px' }}>
         {['hot', 'new', 'top'].map(s => (
           <button
             key={s}
@@ -127,27 +122,27 @@ function PostPage() {
         ))}
       </div>
 
-      {post.comments?.map(comment => (
-        <CommentItem
-          key={comment.id}
-          comment={comment}
-          avatars={avatars}
-          onVote={(commentId, avatarId) => voteOnComment(commentId, avatarId)}
-          onComment={(commentId, extraContext, length, avatarId) => commentOnComment(id, commentId, avatarId, extraContext, length)}
-          onDelete={handleDeleteComment}
-        />
-      ))}
+      {!post.comments?.length ? (
+        <div className="empty-state">
+          <p>No comments yet</p>
+          <button className="primary" style={{ marginTop: '12px' }} onClick={() => setModal('comment')}>
+            Be the first to comment
+          </button>
+        </div>
+      ) : (
+        post.comments.map(comment => (
+          <CommentItem
+            key={comment.id}
+            comment={comment}
+            avatars={avatars}
+            onVote={(commentId, avatarId) => voteOnComment(commentId, avatarId)}
+            onComment={(commentId, extraContext, length, avatarId) => commentOnComment(id, commentId, avatarId, extraContext, length)}
+            onDelete={handleDeleteComment}
+          />
+        ))
+      )}
 
       {/* Modals */}
-      {modal === 'vote' && (
-        <AvatarActionModal
-          avatars={avatars}
-          title="Select Avatar to Vote"
-          actionLabel="Vote"
-          onAction={handleVote}
-          onClose={() => setModal(null)}
-        />
-      )}
       {modal === 'comment' && (
         <AvatarActionModal
           avatars={avatars}

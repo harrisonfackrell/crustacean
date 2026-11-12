@@ -2,8 +2,12 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import PostCard from '../components/PostCard';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
+import { formatRelativeTime } from '../utils/time';
 
 const MAX_CONTENT_LENGTH = 200; // Characters before truncation
+const HISTORY_PAGE_SIZE = 25;
 
 function AvatarPage() {
   const { id } = useParams();
@@ -14,9 +18,14 @@ function AvatarPage() {
   const [form, setForm] = useState({});
   const [historyTab, setHistoryTab] = useState('all'); // 'posts' | 'comments' | 'all'
   const [expandedItems, setExpandedItems] = useState({}); // Track expanded history items
+  const [visibleHistory, setVisibleHistory] = useState(HISTORY_PAGE_SIZE);
+  const [runningOnce, setRunningOnce] = useState(false);
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     loadAvatar();
+    setVisibleHistory(HISTORY_PAGE_SIZE);
   }, [id]);
 
   const loadAvatar = async () => {
@@ -31,6 +40,7 @@ function AvatarPage() {
       });
     } catch (err) {
       console.error('Failed to load avatar:', err);
+      notify(err.message || 'Failed to load avatar', 'error');
     } finally {
       setLoading(false);
     }
@@ -40,19 +50,29 @@ function AvatarPage() {
     try {
       await api.updateAvatar(id, form);
       setEditing(false);
+      notify('Avatar saved', 'success');
       loadAvatar();
     } catch (err) {
       console.error('Failed to save avatar:', err);
+      notify(err.message || 'Failed to save avatar', 'error');
     }
   };
 
   const handleReset = async () => {
-    if (!confirm('Reset all emergent data for this avatar? This cannot be undone.')) return;
+    const ok = await confirm({
+      title: `Reset u/${form.handle || avatar?.handle}?`,
+      body: 'All of this avatar\'s posts, comments, votes, and relationships will be deleted. This cannot be undone.',
+      confirmLabel: 'Reset avatar',
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await api.resetAvatar(id);
+      notify('Avatar reset', 'success');
       loadAvatar();
     } catch (err) {
       console.error('Failed to reset avatar:', err);
+      notify(err.message || 'Failed to reset avatar', 'error');
     }
   };
 
@@ -68,15 +88,21 @@ function AvatarPage() {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to export avatar:', err);
+      notify(err.message || 'Failed to export avatar', 'error');
     }
   };
 
   const handleRunAutoInteract = async () => {
+    setRunningOnce(true);
     try {
       await api.runAutoInteractOnce(id);
+      notify('Browsing session complete', 'success');
       loadAvatar();
     } catch (err) {
       console.error('Failed to run auto-interact:', err);
+      notify(err.message || 'Browsing session failed', 'error');
+    } finally {
+      setRunningOnce(false);
     }
   };
 
@@ -122,6 +148,7 @@ function AvatarPage() {
     const isPost = type === 'post';
     const isExpanded = expandedItems[item.id];
     const shouldTruncate = isLongContent(item.content) && !isExpanded;
+    const time = formatRelativeTime(item.created_at);
 
     return (
       <div key={item.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
@@ -135,7 +162,7 @@ function AvatarPage() {
           <div style={{ flex: 1, minWidth: 0 }}>
             {/* Community, post title, and timestamp inline */}
             <div className="post-meta" style={{ marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-              <Link to={`/community/${item.community?.id || 'all'}`}>c/{item.community?.name || 'Unknown'}</Link>
+              <Link to={`/community/${item.community?.id || 'all'}`}>c/{item.community?.name || 'All'}</Link>
               {isPost && item.title && (
                 <Link to={`/post/${item.id}`} style={{ fontWeight: 600, color: 'var(--color-highlight)' }}>
                   {item.title}
@@ -146,7 +173,7 @@ function AvatarPage() {
                   {item.post_title}
                 </Link>
               )}
-              <span>{new Date(item.created_at).toLocaleString()}</span>
+              <span title={time.title}>{time.label}</span>
             </div>
             {/* Content - truncated with expand */}
             {renderTruncatedContent(item, type)}
@@ -180,8 +207,19 @@ function AvatarPage() {
     ...(avatar.comments || []).map(c => ({ ...c, _type: 'comment' }))
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
+  const filteredHistory = combinedHistory.filter(item => {
+    if (historyTab === 'all') return true;
+    // Handle both singular and plural forms: _type='post' matches 'posts', _type='comment' matches 'comments'
+    const typeMatch = historyTab.replace(/s$/, '') === item._type;
+    return typeMatch;
+  });
+
+  const visibleHistoryItems = filteredHistory.slice(0, visibleHistory);
+  const hasMoreHistory = filteredHistory.length > visibleHistory;
+
   return (
     <div className="container">
+      {confirmDialog}
       <div className="profile-header" style={{ position: 'relative' }}>
         {/* Three-dot menu over the header - hidden while editing */}
         {!editing && (
@@ -202,6 +240,9 @@ function AvatarPage() {
                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                       <button className="primary" style={{flex: 1}} onClick={() => { setEditing(true); setMenuOpen(false); }}>
                         ✏️ Edit
+                      </button>
+                      <button className="menu-item" style={{flex: 1}} onClick={() => { handleRunAutoInteract(); setMenuOpen(false); }} disabled={runningOnce}>
+                        {runningOnce ? '⏳ Browsing...' : '🎲 Browse'}
                       </button>
                       <button className="menu-item" style={{flex: 1}} onClick={() => { handleExport(); setMenuOpen(false); }}>
                         📤 Export
@@ -323,38 +364,40 @@ function AvatarPage() {
             <button
               className={historyTab === 'posts' ? 'primary' : 'secondary'}
               style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
-              onClick={() => setHistoryTab('posts')}
+              onClick={() => { setHistoryTab('posts'); setVisibleHistory(HISTORY_PAGE_SIZE); }}
             >
               Posts
             </button>
             <button
               className={historyTab === 'comments' ? 'primary' : 'secondary'}
               style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
-              onClick={() => setHistoryTab('comments')}
+              onClick={() => { setHistoryTab('comments'); setVisibleHistory(HISTORY_PAGE_SIZE); }}
             >
               Comments
             </button>
             <button
               className={historyTab === 'all' ? 'primary' : 'secondary'}
               style={{ padding: '4px 12px', fontSize: '13px', cursor: 'pointer' }}
-              onClick={() => setHistoryTab('all')}
+              onClick={() => { setHistoryTab('all'); setVisibleHistory(HISTORY_PAGE_SIZE); }}
             >
               All
             </button>
           </div>
         </div>
         <div className="card-body">
-          {combinedHistory.length === 0 ? (
+          {filteredHistory.length === 0 ? (
             <p className="empty-state">No posts or comments yet</p>
           ) : (
-            combinedHistory
-              .filter(item => {
-                if (historyTab === 'all') return true;
-                // Handle both singular and plural forms: _type='post' matches 'posts', _type='comment' matches 'comments'
-                const typeMatch = historyTab.replace(/s$/, '') === item._type;
-                return typeMatch;
-              })
-              .map(item => renderHistoryItem(item, item._type))
+            <>
+              {visibleHistoryItems.map(item => renderHistoryItem(item, item._type))}
+              {hasMoreHistory && (
+                <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                  <button className="secondary" onClick={() => setVisibleHistory(c => c + HISTORY_PAGE_SIZE)}>
+                    Load more ({filteredHistory.length - visibleHistory} remaining)
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

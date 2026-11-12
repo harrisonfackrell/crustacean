@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDatabase } = require('../db');
-const { getVoteCount, getCommentCount, getCommentsForPost, calculateHotness } = require('./helpers');
+const { getVoteCount, getCommentCount, getCommentsForPost, calculateHotness, deletePostCascade } = require('./helpers');
 const { estimateLengthScale } = require('../utils/lengthScale');
 
 function getDb() {
@@ -46,7 +46,7 @@ router.post('/posts', (req, res) => {
 });
 
 router.delete('/posts/:id', (req, res) => {
-  getDb().run('DELETE FROM Posts WHERE id = ?', [req.params.id]);
+  deletePostCascade(getDb, req.params.id);
   res.json({ success: true });
 });
 

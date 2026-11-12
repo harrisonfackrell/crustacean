@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import AvatarActionModal from './AvatarActionModal';
+import { formatRelativeTime } from '../utils/time';
 
 function CommentItem({ comment, avatars, onVote, onComment, onDelete }) {
   const [modal, setModal] = useState(null);
 
   const score = (comment.upvotes || 0) - (comment.downvotes || 0);
   const scoreColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
+  const time = formatRelativeTime(comment.created_at);
 
   const handleVote = async ({ selectedAvatar }) => {
     await onVote(comment.id, selectedAvatar);
@@ -22,8 +24,8 @@ function CommentItem({ comment, avatars, onVote, onComment, onDelete }) {
     <div className="comment-card">
       <div className="comment-header">
         <div className="comment-meta">
-          <Link to={`/avatar/${comment.avatar?.id}`}>{'u/' + comment.avatar?.handle || 'Unknown'}</Link>{' '}
-          • <span style={{ color: scoreColor }}>{score}</span> • {new Date(comment.created_at).toLocaleString()}
+          <Link to={`/avatar/${comment.avatar?.id}`}>{'u/' + (comment.avatar?.handle || 'deleted')}</Link>{' '}
+          • <span style={{ color: scoreColor }}>{score}</span> • <span title={time.title}>{time.label}</span>
         </div>
       </div>
       <div className="comment-text">{comment.content}</div>

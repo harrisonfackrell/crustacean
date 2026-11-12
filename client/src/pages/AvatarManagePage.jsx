@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 function AvatarManagePage() {
   const [avatars, setAvatars] = useState([]);
@@ -8,6 +10,8 @@ function AvatarManagePage() {
   const [showCreateAvatar, setShowCreateAvatar] = useState(false);
   const [avatarForm, setAvatarForm] = useState({ name: '', handle: '', private_bio: '', public_bio: '' });
   const [searchQuery, setSearchQuery] = useState('');
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     loadData();
@@ -19,6 +23,7 @@ function AvatarManagePage() {
       setAvatars(a);
     } catch (err) {
       console.error('Failed to load data:', err);
+      notify(err.message || 'Failed to load avatars', 'error');
     } finally {
       setLoading(false);
     }
@@ -35,19 +40,29 @@ function AvatarManagePage() {
       await api.createAvatar(avatarForm);
       setAvatarForm({ name: '', handle: '', private_bio: '', public_bio: '' });
       setShowCreateAvatar(false);
+      notify(`u/${avatarForm.handle} created`, 'success');
       loadData();
     } catch (err) {
       console.error('Failed to create avatar:', err);
+      notify(err.message || 'Failed to create avatar', 'error');
     }
   };
 
-  const handleDeleteAvatar = async (id) => {
-    if (!confirm('Delete this avatar?')) return;
+  const handleDeleteAvatar = async (avatar) => {
+    const ok = await confirm({
+      title: `Delete u/${avatar.handle}?`,
+      body: 'Their posts, comments, votes, and relationships will be removed too. This cannot be undone.',
+      confirmLabel: 'Delete avatar',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await api.deleteAvatar(id);
+      await api.deleteAvatar(avatar.id);
+      notify('Avatar deleted', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to delete avatar:', err);
+      notify(err.message || 'Failed to delete avatar', 'error');
     }
   };
 
@@ -55,6 +70,7 @@ function AvatarManagePage() {
 
   return (
     <div className="container">
+      {confirmDialog}
 
       {/* Avatar List */}
       <div className="card">
@@ -71,7 +87,7 @@ function AvatarManagePage() {
         </div>
         <div className="card-body">
           {filteredAvatars.length === 0 ? (
-            <p className="empty-state">{avatars.length === 0 ? 'No avatars yet' : 'No avatars match your search'}</p>
+            <p className="empty-state">{avatars.length === 0 ? 'No avatars yet — click + to create one' : 'No avatars match your search'}</p>
           ) : (
             filteredAvatars.map(a => (
               <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--color-border)' }}>
@@ -80,7 +96,7 @@ function AvatarManagePage() {
                   <span style={{ color: 'var(--color-text-muted)' }}>{a.name}</span>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.public_bio || 'No bio'}</div>
                 </div>
-                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, flexShrink: 0, marginLeft: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteAvatar(a.id)}>🗑️</button>
+                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, flexShrink: 0, marginLeft: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteAvatar(a)} aria-label={`Delete u/${a.handle}`}>🗑️</button>
               </div>
             ))
           )}
@@ -102,15 +118,15 @@ function AvatarManagePage() {
               </div>
               <div className="form-group">
                 <label>Handle *</label>
-                <input value={avatarForm.handle} onChange={e => setAvatarForm({ ...avatarForm, handle: e.target.value })} />
+                <input value={avatarForm.handle} onChange={e => setAvatarForm({ ...avatarForm, handle: e.target.value })} placeholder="e.g. clawdia" />
               </div>
               <div className="form-group">
                 <label>Private Bio</label>
-                <textarea value={avatarForm.private_bio} onChange={e => setAvatarForm({ ...avatarForm, private_bio: e.target.value })} />
+                <textarea value={avatarForm.private_bio} onChange={e => setAvatarForm({ ...avatarForm, private_bio: e.target.value })} placeholder="Used in the LLM system prompt — who this avatar is, what it knows, how it thinks." />
               </div>
               <div className="form-group">
                 <label>Public Bio</label>
-                <textarea value={avatarForm.public_bio} onChange={e => setAvatarForm({ ...avatarForm, public_bio: e.target.value })} />
+                <textarea value={avatarForm.public_bio} onChange={e => setAvatarForm({ ...avatarForm, public_bio: e.target.value })} placeholder="Shown on the avatar's profile page." />
               </div>
               <div className="form-actions">
                 <button className="primary" onClick={handleCreateAvatar}>Create</button>

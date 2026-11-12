@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDatabase } = require('../db');
-const { sanitizeCommunityName, getVoteCount, getCommentCount, getCommentsForPost, sortPosts, calculateHotness } = require('./helpers');
+const { sanitizeCommunityName, getVoteCount, getCommentCount, getCommentsForPost, sortPosts, calculateHotness, deleteCommunityCascade, deletePostCascade } = require('./helpers');
 
 function getDb() {
   return getDatabase();
@@ -120,7 +120,7 @@ router.put('/communities/:id', (req, res) => {
 });
 
 router.delete('/communities/:id', (req, res) => {
-  getDb().run('DELETE FROM Communities WHERE id = ?', [req.params.id]);
+  deleteCommunityCascade(getDb, req.params.id);
   res.json({ success: true });
 });
 
@@ -129,8 +129,13 @@ router.post('/communities/:id/reset', (req, res) => {
   if (!community) {
     return res.status(404).json({ error: 'Community not found' });
   }
-  // Clear emergent data for this community
-  getDb().run('DELETE FROM Posts WHERE community_id = ?', [community.id]);
+  // Clear emergent data for this community (with full cascade to comments/votes)
+  const postIds = getDb()
+    .all('SELECT id FROM Posts WHERE community_id = ?', [community.id])
+    .map(r => r.id);
+  for (const postId of postIds) {
+    deletePostCascade(getDb, postId);
+  }
   getDb().run('DELETE FROM AvatarCommunityPreferences WHERE community_id = ?', [community.id]);
   res.json({ success: true });
 });

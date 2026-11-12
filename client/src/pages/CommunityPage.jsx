@@ -4,6 +4,15 @@ import { api } from '../api';
 import PostCard from '../components/PostCard';
 import AvatarActionModal from '../components/AvatarActionModal';
 import { useInteract } from '../hooks/useInteract';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
+
+const PAGE_SIZE = 20;
+const SORT_OPTIONS = [
+  { key: 'hot', label: '🔥 hot' },
+  { key: 'new', label: '🕐 new' },
+  { key: 'top', label: '📈 top' },
+];
 
 function CommunityPage({ id: idProp }) {
   const { id: idFromParams } = useParams();
@@ -21,7 +30,15 @@ function CommunityPage({ id: idProp }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [globalRules, setGlobalRules] = useState([]);
   const [postModal, setPostModal] = useState(false);
-  const [sort, setSort] = useState('top');
+  const [sort, setSort] = useState('hot');
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // Reset pagination whenever we (re)load
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [id, sort]);
 
   useEffect(() => {
     loadCommunity();
@@ -33,6 +50,7 @@ function CommunityPage({ id: idProp }) {
       loadCommunityCount();
       loadCommunitiesList();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, sort]);
 
   const loadAvatars = async () => {
@@ -93,6 +111,7 @@ function CommunityPage({ id: idProp }) {
       }
     } catch (err) {
       console.error('Failed to load community:', err);
+      notify(err.message || 'Failed to load community', 'error');
     } finally {
       setLoading(false);
     }
@@ -117,6 +136,7 @@ function CommunityPage({ id: idProp }) {
       loadCommunity();
     } catch (err) {
       console.error('Failed to add global rule:', err);
+      notify(err.message || 'Failed to add global rule', 'error');
     }
   };
 
@@ -127,6 +147,7 @@ function CommunityPage({ id: idProp }) {
       loadCommunity();
     } catch (err) {
       console.error('Failed to delete global rule:', err);
+      notify(err.message || 'Failed to delete global rule', 'error');
     }
   };
 
@@ -141,60 +162,72 @@ function CommunityPage({ id: idProp }) {
       await api.updateCommunity(id, { name: form.name, description: form.description, rules: form.rules });
       setEditing(false);
       setNewRule('');
+      notify('Community saved', 'success');
       loadCommunity();
     } catch (err) {
       console.error('Failed to save community:', err);
+      notify(err.message || 'Failed to save community', 'error');
     }
   };
 
   const handleReset = async () => {
     if (isPseudoCommunity) {
-      if (!confirm('Reset ALL emergent data? This will clear all posts, comments, votes, and relationships. This cannot be undone.')) return;
-      if (!confirm('Are you absolutely sure?')) return;
+      const ok = await confirm({
+        title: 'Reset ALL emergent data?',
+        body: 'This will clear all posts, comments, votes, and relationships. This cannot be undone.',
+        confirmLabel: 'Reset everything',
+        danger: true,
+      });
+      if (!ok) return;
+      const sure = await confirm({
+        title: 'Are you absolutely sure?',
+        body: 'Every post, comment, vote, and relationship will be permanently deleted.',
+        confirmLabel: 'Yes, reset everything',
+        danger: true,
+      });
+      if (!sure) return;
       try {
         await api.resetAll();
+        notify('All emergent data reset', 'success');
         loadCommunity();
       } catch (err) {
         console.error('Failed to reset:', err);
+        notify(err.message || 'Failed to reset', 'error');
       }
     } else {
-      if (!confirm('Reset all emergent data for this community? This cannot be undone.')) return;
+      const ok = await confirm({
+        title: `Reset c/${form.name || id}?`,
+        body: 'All posts, comments, and votes in this community will be deleted. This cannot be undone.',
+        confirmLabel: 'Reset community',
+        danger: true,
+      });
+      if (!ok) return;
       try {
         await api.resetCommunity(id);
+        notify('Community reset', 'success');
         loadCommunity();
       } catch (err) {
         console.error('Failed to reset community:', err);
+        notify(err.message || 'Failed to reset community', 'error');
       }
     }
   };
 
   const handleExport = async () => {
-    if (isPseudoCommunity) {
-      try {
-        const data = await api.exportAll();
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'crustacean-export.json';
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        console.error('Failed to export:', err);
-      }
-    } else {
-      try {
-        const data = await api.exportCommunity(id);
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${form.name || 'community'}-export.json`;
-        a.click();
-        URL.revokeObjectURL(url);
-      } catch (err) {
-        console.error('Failed to export community:', err);
-      }
+    try {
+      const data = isPseudoCommunity
+        ? await api.exportAll()
+        : await api.exportCommunity(id);
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = isPseudoCommunity ? 'crustacean-export.json' : `${form.name || 'community'}-export.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export:', err);
+      notify(err.message || 'Failed to export', 'error');
     }
   };
 
@@ -203,21 +236,15 @@ function CommunityPage({ id: idProp }) {
       const result = await api.generatePost({ avatar_id: selectedAvatar, community_id: id, extra_context: extraContext, title: inputTitle, length });
       await api.createPost({ community_id: id, avatar_id: selectedAvatar, title: result.title, content: result.content });
       setPostModal(false);
+      notify('Post created', 'success');
       loadCommunity();
     } catch (err) {
-      console.error('Failed to post:', err);
+      // Modal keeps itself open and toasts the error
+      throw err;
     }
   };
 
   const { voteOnPost } = useInteract(loadCommunity);
-
-  const getSortedPosts = (posts, sortType) => {
-    if (!posts) return [];
-    if (sortType === 'top') {
-      return [...posts].sort((a, b) => (b.commentCount || 0) - (a.commentCount || 0));
-    }
-    return posts;
-  };
 
   // Build reactive empty state message for the pseudo-community
   const getEmptyStateMessage = () => {
@@ -275,7 +302,7 @@ function CommunityPage({ id: idProp }) {
             You have communities but no avatars.{' '}
             <Link to="/avatars" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
               Add an Avatar
-            </Link>{' '}
+            </Link>
             to start posting, or{' '}
             <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}>
               go to Settings
@@ -307,8 +334,13 @@ function CommunityPage({ id: idProp }) {
   if (loading) return <div className="loading">Loading...</div>;
   if (!community) return <div className="empty-state">Community not found</div>;
 
+  const posts = community.posts || [];
+  const visiblePosts = posts.slice(0, visibleCount);
+  const hasMore = posts.length > visibleCount;
+
   return (
     <div className="container">
+      {confirmDialog}
       <div className="community-header" style={{ position: 'relative' }}>
         <div className="community-banner"></div>
         {/* Three-dot menu over the banner - hidden while editing */}
@@ -442,13 +474,13 @@ function CommunityPage({ id: idProp }) {
                 <button className="secondary" onClick={() => setEditing(false)}>Cancel</button>
               </>
             ) : (
-              ['top', 'new'].map(s => (
+              SORT_OPTIONS.map(({ key, label }) => (
                 <button
-                  key={s}
-                  className={`sort-btn ${sort === s ? 'primary' : 'secondary'}`}
-                  onClick={() => setSort(s)}
+                  key={key}
+                  className={`sort-btn ${sort === key ? 'primary' : 'secondary'}`}
+                  onClick={() => setSort(key)}
                 >
-                  {s === 'top' ? '📈 ' : '🕐 '}{s}
+                  {label}
                 </button>
               ))
             )}
@@ -472,12 +504,21 @@ function CommunityPage({ id: idProp }) {
       </div>
 
       {/* Posts */}
-      {community.posts?.length === 0 ? (
+      {posts.length === 0 ? (
         getEmptyStateMessage()
       ) : (
-        getSortedPosts(community.posts, sort).map(post => (
-          <PostCard key={post.id} post={post} showCommunity={isPseudoCommunity} onVote={voteOnPost} avatars={avatars} />
-        ))
+        <>
+          {visiblePosts.map(post => (
+            <PostCard key={post.id} post={post} showCommunity={isPseudoCommunity} onVote={voteOnPost} avatars={avatars} />
+          ))}
+          {hasMore && (
+            <div style={{ textAlign: 'center', padding: '16px 0' }}>
+              <button className="secondary" onClick={() => setVisibleCount(c => c + PAGE_SIZE)}>
+                Load more ({posts.length - visibleCount} remaining)
+              </button>
+            </div>
+          )}
+        </>
       )}
 
       {/* Post Modal */}
@@ -496,6 +537,5 @@ function CommunityPage({ id: idProp }) {
     </div>
   );
 }
-
 
 export default CommunityPage;

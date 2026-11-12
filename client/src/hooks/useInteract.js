@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { api } from '../api';
 
+// Interaction actions that drive the LLM. Each action reloads the view on
+// success. On failure we log and re-throw: the calling AvatarActionModal is
+// responsible for surfacing the error to the user via a toast and for
+// keeping the modal open.
 export function useInteract(onReload) {
   const [generating, setGenerating] = useState(false);
 
@@ -12,6 +16,7 @@ export function useInteract(onReload) {
       await onReload();
     } catch (err) {
       console.error('Failed to vote on post:', err);
+      throw err;
     } finally {
       setGenerating(false);
     }
@@ -25,6 +30,7 @@ export function useInteract(onReload) {
       await onReload();
     } catch (err) {
       console.error('Failed to vote on comment:', err);
+      throw err;
     } finally {
       setGenerating(false);
     }
@@ -37,11 +43,8 @@ export function useInteract(onReload) {
       await api.createComment({ post_id: postId, avatar_id: selectedAvatar, content: result.content });
       await onReload();
     } catch (err) {
-      if (err.message === 'Avatar has already replied here') {
-        console.warn('Avatar already replied to this post');
-      } else {
-        console.error('Failed to comment on post:', err);
-      }
+      console.error('Failed to comment on post:', err);
+      throw err;
     } finally {
       setGenerating(false);
     }
@@ -54,11 +57,8 @@ export function useInteract(onReload) {
       await api.createComment({ post_id: postId, parent_comment_id: commentId, avatar_id: selectedAvatar, content: result.content });
       await onReload();
     } catch (err) {
-      if (err.message === 'Avatar has already replied here') {
-        console.warn('Avatar already replied to this comment');
-      } else {
-        console.error('Failed to reply to comment:', err);
-      }
+      console.error('Failed to reply to comment:', err);
+      throw err;
     } finally {
       setGenerating(false);
     }

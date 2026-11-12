@@ -1,6 +1,6 @@
 const express = require('express');
 const { getDatabase } = require('../db');
-const { sanitizeAvatarHandle, getVoteCount } = require('./helpers');
+const { sanitizeAvatarHandle, getVoteCount, deleteAvatarCascade, deletePostCascade } = require('./helpers');
 
 function getDb() {
   return getDatabase();
@@ -115,7 +115,7 @@ router.put('/avatars/:id', (req, res) => {
 });
 
 router.delete('/avatars/:id', (req, res) => {
-  getDb().run('DELETE FROM Avatars WHERE id = ?', [req.params.id]);
+  deleteAvatarCascade(getDb, req.params.id);
   res.json({ success: true });
 });
 
@@ -124,8 +124,20 @@ router.post('/avatars/:id/reset', (req, res) => {
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
-  // Clear emergent data
-  getDb().run('DELETE FROM Posts WHERE avatar_id = ?', [avatar.id]);
+  // Clear emergent data (with full cascade to comments/votes on its content)
+  const postIds = getDb().all('SELECT id FROM Posts WHERE avatar_id = ?', [avatar.id]).map(r => r.id);
+  for (const postId of postIds) {
+    deletePostCascade(getDb, postId);
+  }
+  // Remove votes cast by other avatars on this avatar's remaining comments
+  const commentIds = getDb().all('SELECT id FROM Comments WHERE avatar_id = ?', [avatar.id]).map(r => r.id);
+  if (commentIds.length > 0) {
+    const placeholders = commentIds.map(() => '?').join(', ');
+    getDb().run(
+      `DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (${placeholders}) AND avatar_id != ?`,
+      [...commentIds, avatar.id]
+    );
+  }
   getDb().run('DELETE FROM Comments WHERE avatar_id = ?', [avatar.id]);
   getDb().run('DELETE FROM Votes WHERE avatar_id = ?', [avatar.id]);
   getDb().run('DELETE FROM AvatarCommunityPreferences WHERE avatar_id = ?', [avatar.id]);

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 function CommunityManagePage() {
   const [communities, setCommunities] = useState([]);
@@ -9,6 +11,8 @@ function CommunityManagePage() {
   const [communityForm, setCommunityForm] = useState({ name: '', description: '', rules: [] });
   const [newRule, setNewRule] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
 
   useEffect(() => {
     loadData();
@@ -20,6 +24,7 @@ function CommunityManagePage() {
       setCommunities(c);
     } catch (err) {
       console.error('Failed to load data:', err);
+      notify(err.message || 'Failed to load communities', 'error');
     } finally {
       setLoading(false);
     }
@@ -43,22 +48,32 @@ function CommunityManagePage() {
     if (!communityForm.name) return;
     try {
       await api.createCommunity({ name: communityForm.name, description: communityForm.description, rules: communityForm.rules });
+      notify(`c/${communityForm.name} created`, 'success');
       setCommunityForm({ name: '', description: '', rules: [] });
       setNewRule('');
       setShowCreateCommunity(false);
       loadData();
     } catch (err) {
       console.error('Failed to create community:', err);
+      notify(err.message || 'Failed to create community', 'error');
     }
   };
 
-  const handleDeleteCommunity = async (id) => {
-    if (!confirm('Delete this community?')) return;
+  const handleDeleteCommunity = async (community) => {
+    const ok = await confirm({
+      title: `Delete c/${community.name}?`,
+      body: 'All posts, comments, and votes in this community will be removed too. This cannot be undone.',
+      confirmLabel: 'Delete community',
+      danger: true,
+    });
+    if (!ok) return;
     try {
-      await api.deleteCommunity(id);
+      await api.deleteCommunity(community.id);
+      notify('Community deleted', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to delete community:', err);
+      notify(err.message || 'Failed to delete community', 'error');
     }
   };
 
@@ -66,6 +81,7 @@ function CommunityManagePage() {
 
   return (
     <div className="container">
+      {confirmDialog}
 
       {/* Community List */}
       <div className="card">
@@ -89,7 +105,7 @@ function CommunityManagePage() {
             </div>
           </div>
           {filteredCommunities.length === 0 ? (
-            <p className="empty-state">{communities.length === 0 ? 'No communities yet' : 'No communities match your search'}</p>
+            <p className="empty-state">{communities.length === 0 ? 'No communities yet — click + to create one' : 'No communities match your search'}</p>
           ) : (
             filteredCommunities.map(c => (
               <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--color-border)' }}>
@@ -97,7 +113,7 @@ function CommunityManagePage() {
                   <Link to={`/community/${c.id}`}><strong>{'c/' + c.name}</strong></Link>
                   <div style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>{c.description || 'No description'}</div>
                 </div>
-                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteCommunity(c.id)}>🗑️</button>
+                <button className="danger" style={{ width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }} onClick={() => handleDeleteCommunity(c)} aria-label={`Delete c/${c.name}`}>🗑️</button>
               </div>
             ))
           )}
@@ -115,7 +131,7 @@ function CommunityManagePage() {
             <div className="modal-body">
               <div className="form-group">
                 <label>Name *</label>
-                <input value={communityForm.name} onChange={e => setCommunityForm({ ...communityForm, name: e.target.value })} />
+                <input value={communityForm.name} onChange={e => setCommunityForm({ ...communityForm, name: e.target.value })} placeholder="e.g. deepsea" />
               </div>
               <div className="form-group">
                 <label>Description</label>

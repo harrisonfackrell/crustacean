@@ -237,6 +237,14 @@ class Database {
 
   run(sql, params = []) {
     this.db.run(sql, params);
+    // Capture the last inserted rowid immediately: save() calls
+    // db.export(), which resets last_insert_rowid() back to 0 on the
+    // underlying connection. Querying it via a prepared statement here
+    // (before the export) gives us the real value.
+    const stmt = this.db.prepare('SELECT last_insert_rowid() as id');
+    if (stmt.step()) {
+      this._lastInsertId = stmt.getAsObject().id;
+    }
     this.save();
     return this.db;
   }
@@ -262,11 +270,9 @@ class Database {
   }
 
   lastInsertRowid() {
-    const result = this.db.exec('SELECT last_insert_rowid() as id');
-    if (result.length > 0 && result[0].values.length > 0) {
-      return result[0].values[0][0];
-    }
-    return null;
+    // Returns the rowid captured by the most recent run() call.
+    // (A live query would return 0: export() in save() resets it.)
+    return this._lastInsertId !== undefined ? this._lastInsertId : null;
   }
 
   destroy() {

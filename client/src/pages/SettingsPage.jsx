@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import BulkImportModal from '../components/BulkImportModal';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
+import { useDebounce } from '../hooks/useDebounce';
 
 function SettingsPage() {
   const [settings, setSettings] = useState({
@@ -16,6 +19,15 @@ function SettingsPage() {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const { notify } = useToast();
+  const { confirm, dialog: confirmDialog } = useConfirm();
+
+  // Debounced drafts of the text settings; the server is only hit after the
+  // user stops typing, with a subtle "Saved" indicator as feedback.
+  const debouncedUrl = useDebounce(settings.llm_api_url, 800);
+  const debouncedKey = useDebounce(settings.llm_api_key, 800);
+  const debouncedPrompt = useDebounce(settings.global_system_prompt, 800);
 
   useEffect(() => {
     loadData();
@@ -31,19 +43,37 @@ function SettingsPage() {
       setGlobalRules(rules);
     } catch (err) {
       console.error('Failed to load settings:', err);
+      notify(err.message || 'Failed to load settings', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveSetting = async (key, value) => {
+  const persistSetting = async (key, value) => {
     try {
       await api.setSetting(key, value);
-      setSettings({ ...settings, [key]: value });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
     } catch (err) {
       console.error('Failed to save setting:', err);
+      notify(err.message || 'Failed to save setting', 'error');
     }
   };
+
+  useEffect(() => {
+    if (debouncedUrl !== settings.llm_api_url) persistSetting('llm_api_url', debouncedUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedUrl]);
+
+  useEffect(() => {
+    if (debouncedKey !== settings.llm_api_key) persistSetting('llm_api_key', debouncedKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedKey]);
+
+  useEffect(() => {
+    if (debouncedPrompt !== settings.global_system_prompt) persistSetting('global_system_prompt', debouncedPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedPrompt]);
 
   const fetchModels = async () => {
     if (!settings.llm_api_url) {
@@ -64,8 +94,9 @@ function SettingsPage() {
   };
 
   const handleModelSelect = async (modelValue) => {
-    // Save the selected model and also update the custom input field to reflect the selection
-    await handleSaveSetting('llm_model', modelValue);
+    // Save immediately on explicit selection (no debounce needed)
+    setSettings({ ...settings, llm_model: modelValue });
+    await persistSetting('llm_model', modelValue);
   };
 
   const handleAddRule = async () => {
@@ -73,18 +104,22 @@ function SettingsPage() {
     try {
       await api.addGlobalRule(newRule.trim());
       setNewRule('');
-      loadData();
+      const rules = await api.getGlobalRules();
+      setGlobalRules(rules);
     } catch (err) {
       console.error('Failed to add rule:', err);
+      notify(err.message || 'Failed to add rule', 'error');
     }
   };
 
   const handleDeleteRule = async (id) => {
     try {
       await api.deleteGlobalRule(id);
-      loadData();
+      const rules = await api.getGlobalRules();
+      setGlobalRules(rules);
     } catch (err) {
       console.error('Failed to delete rule:', err);
+      notify(err.message || 'Failed to delete rule', 'error');
     }
   };
 
@@ -98,8 +133,10 @@ function SettingsPage() {
       a.download = 'crustacean-export.json';
       a.click();
       URL.revokeObjectURL(url);
+      notify('Export complete', 'success');
     } catch (err) {
       console.error('Failed to export:', err);
+      notify(err.message || 'Failed to export', 'error');
     }
   };
 
@@ -109,51 +146,80 @@ function SettingsPage() {
       const text = await file.text();
       const data = JSON.parse(text);
       await api.importData(data);
+      notify('Import complete', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to import:', err);
-      alert('Import failed: ' + err.message);
+      notify('Import failed: ' + err.message, 'error');
     }
   };
 
   const handleGlobalReset = async () => {
-    if (!confirm('Reset ALL emergent data? This will clear all posts, comments, votes, and relationships. This cannot be undone.')) return;
-    if (!confirm('Are you absolutely sure?')) return;
+    const ok = await confirm({
+      title: 'Reset ALL emergent data?',
+      body: 'This will clear all posts, comments, votes, and relationships. Avatars, communities, and settings are kept. This cannot be undone.',
+      confirmLabel: 'Reset everything',
+      danger: true,
+    });
+    if (!ok) return;
+    const sure = await confirm({
+      title: 'Are you absolutely sure?',
+      body: 'Every post, comment, vote, and relationship will be permanently deleted.',
+      confirmLabel: 'Yes, reset everything',
+      danger: true,
+    });
+    if (!sure) return;
     try {
       await api.resetAll();
+      notify('All emergent data reset', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to reset:', err);
+      notify(err.message || 'Failed to reset', 'error');
     }
   };
 
   const handleDatabaseDestroy = async () => {
-    if (!confirm('DESTROY THE ENTIRE DATABASE? This will clear ALL data including avatars, communities, settings, and rules. This cannot be undone.')) return;
-    if (!confirm('THIS WILL PERMANENTLY DELETE EVERYTHING. Are you absolutely sure?')) return;
+    const ok = await confirm({
+      title: 'DESTROY THE ENTIRE DATABASE?',
+      body: 'This will clear ALL data including avatars, communities, settings, and rules. This cannot be undone.',
+      confirmLabel: 'Destroy database',
+      danger: true,
+    });
+    if (!ok) return;
+    const sure = await confirm({
+      title: 'THIS WILL PERMANENTLY DELETE EVERYTHING.',
+      body: 'Avatars, communities, posts, comments, votes, rules, and LLM settings will all be gone.',
+      confirmLabel: 'Yes, destroy it',
+      danger: true,
+    });
+    if (!sure) return;
     try {
       await api.destroyDatabase();
+      notify('Database destroyed', 'success');
       loadData();
     } catch (err) {
       console.error('Failed to destroy database:', err);
+      notify(err.message || 'Failed to destroy database', 'error');
     }
   };
 
   const handleQuickStart = async ({ context, avatarCount, communityCount, includeExisting }) => {
     try {
       const payload = { context, avatarCount, communityCount };
-      
+
       // If the checkbox is checked, fetch and include existing data as reference
       if (includeExisting) {
         const existingData = await api.exportAll();
         payload.existingData = existingData;
       }
-      
+
       // Step 1: Generate the bulk import data via LLM
       const bulkData = await api.generateBulkImport(payload);
-      
+
       // Step 2: Import the generated data
       await api.importData(bulkData);
-      
+
       // Step 3: Reload the page to reflect changes
       loadData();
     } catch (err) {
@@ -165,6 +231,7 @@ function SettingsPage() {
 
   return (
     <div className="container">
+      {confirmDialog}
 
       {/* Data Control */}
       <div className="card" style={{ marginTop: '16px' }}>
@@ -189,13 +256,18 @@ function SettingsPage() {
 
       {/* LLM Configuration */}
       <div className="card" style={{ marginTop: '16px' }}>
-        <div className="card-header"><h3>LLM Configuration</h3></div>
+        <div className="card-header">
+          <h3>LLM Configuration</h3>
+          {saved && (
+            <span style={{ fontSize: '12px', color: 'var(--color-success)' }}>✓ Saved</span>
+          )}
+        </div>
         <div className="card-body">
           <div className="form-group">
             <label>API URL (OpenAI-compatible)</label>
             <input
               value={settings.llm_api_url || ''}
-              onChange={e => handleSaveSetting('llm_api_url', e.target.value)}
+              onChange={e => setSettings({ ...settings, llm_api_url: e.target.value })}
               placeholder="e.g., http://localhost:11434/v1"
             />
           </div>
@@ -204,7 +276,7 @@ function SettingsPage() {
             <input
               type="password"
               value={settings.llm_api_key || ''}
-              onChange={e => handleSaveSetting('llm_api_key', e.target.value)}
+              onChange={e => setSettings({ ...settings, llm_api_key: e.target.value })}
               placeholder="sk-..."
             />
           </div>
@@ -212,8 +284,10 @@ function SettingsPage() {
             <label>Model</label>
             <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               <select
-                value={settings.llm_model || ''}
-                onChange={e => handleModelSelect(e.target.value)}
+                value={models.includes(settings.llm_model || '') ? settings.llm_model : ''}
+                onChange={e => {
+                  if (e.target.value) handleModelSelect(e.target.value);
+                }}
                 disabled={modelsLoading || modelsError || models.length === 0}
                 style={{ flex: '1 1 180px', minWidth: 0 }}
               >
@@ -240,15 +314,57 @@ function SettingsPage() {
             )}
           </div>
           <div className="form-group">
-            <label>Custom Model (fallback — used if different from dropdown selection)</label>
+            <label>Model (type a custom name if it's not in the list)</label>
             <input
               value={settings.llm_model || ''}
-              onChange={e => handleSaveSetting('llm_model', e.target.value)}
+              onChange={e => setSettings({ ...settings, llm_model: e.target.value })}
               placeholder="e.g., llama3, gpt-4"
+            />
+            <small style={{ color: 'var(--color-text-muted)', display: 'block', marginTop: '4px' }}>
+              Saved automatically. The dropdown and this field both control the same setting.
+            </small>
+          </div>
+          <div className="form-group">
+            <label>Global System Prompt (appended to every LLM call)</label>
+            <textarea
+              value={settings.global_system_prompt || ''}
+              onChange={e => setSettings({ ...settings, global_system_prompt: e.target.value })}
+              placeholder="e.g., All avatars are deep-sea crustaceans with a love of shell puns."
+              style={{ minHeight: '120px' }}
             />
           </div>
         </div>
       </div>
+
+      {/* Global Rules */}
+      <div className="card" style={{ marginTop: '16px' }}>
+        <div className="card-header"><h3>Global Rules</h3></div>
+        <div className="card-body">
+          <p style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginBottom: '12px' }}>
+            Rules apply to every avatar in every community, in addition to each community's own rules.
+          </p>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+            <input
+              value={newRule}
+              onChange={e => setNewRule(e.target.value)}
+              placeholder="Add a global rule..."
+              onKeyDown={e => e.key === 'Enter' && handleAddRule()}
+            />
+            <button className="icon-add-btn" onClick={handleAddRule}>+</button>
+          </div>
+          {globalRules.length === 0 ? (
+            <p className="empty-state" style={{ padding: '16px 0' }}>No global rules</p>
+          ) : (
+            globalRules.map((rule) => (
+              <div key={rule.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
+                <span>{rule.rule}</span>
+                <button className="icon-trash-btn" onClick={() => handleDeleteRule(rule.id)}>🗑️</button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* Bulk Import Modal */}
       {showBulkImportModal && (
         <BulkImportModal

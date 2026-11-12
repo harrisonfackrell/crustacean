@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AvatarActionModal from './AvatarActionModal';
+import { formatRelativeTime } from '../utils/time';
 
 function PostCard({
   post,
@@ -9,46 +10,42 @@ function PostCard({
   onComment,
   onVote,
   avatars,
-  compact = false,
   showCommentCount = true,
 }) {
   const navigate = useNavigate();
   const score = (post.upvotes || 0) - (post.downvotes || 0);
   const voteColor = score > 0 ? 'var(--color-upvote)' : score < 0 ? 'var(--color-downvote)' : 'var(--color-text-muted)';
   const [modal, setModal] = useState(null);
+  const time = formatRelativeTime(post.created_at);
+
+  // "Share" is the immersive vote mechanic: sharing content with an Avatar
+  // provokes it to react. Both the arrows and the Share button open the
+  // same avatar-selection modal.
+  const openVoteModal = () => {
+    if (onVote) setModal('vote');
+  };
 
   const handleVote = async ({ selectedAvatar }) => {
     await onVote(post.id, selectedAvatar);
     setModal(null);
   };
 
-  if (compact) {
-    return (
-      <div style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
-        <Link to={`/post/${post.id}`}>
-          <div className="post-text">{post.content}</div>
-        </Link>
-        <div className="post-meta">{new Date(post.created_at).toLocaleString()}</div>
-      </div>
-    );
-  }
-
   return (
     <div className="post-card">
       <div className="post-votes">
-        <button style={{ color: voteColor }}>▲</button>
+        <button onClick={openVoteModal} title="Share with an Avatar (vote up)" aria-label="Share upvote">▲</button>
         <span className="vote-count" style={{ color: voteColor }}>{score}</span>
-        <button style={{ color: voteColor }}>▼</button>
+        <button onClick={openVoteModal} title="Share with an Avatar (vote down)" aria-label="Share downvote">▼</button>
       </div>
       <div className="post-content">
         <div className="post-meta">
-          <Link to={`/avatar/${post.avatar_id}`}>{'u/' + post.avatar?.handle || 'Unknown'}</Link>{' '}
+          <Link to={`/avatar/${post.avatar_id}`}>{'u/' + (post.avatar?.handle || 'deleted')}</Link>{' '}
           {showCommunity && (
             <>
               in <Link to={`/community/${post.community_id || 'all'}`}>{'c/' + (post.community?.name || 'All')}</Link>{' '}
             </>
           )}
-          • {new Date(post.created_at).toLocaleString()}
+          • <span title={time.title}>{time.label}</span>
         </div>
         <Link to={`/post/${post.id}`}>
           {post.title && <div className="post-title">{post.title}</div>}
