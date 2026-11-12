@@ -42,7 +42,7 @@ let
       filter = stripNpmArtifacts;
     };
 
-    npmDepsHash = "sha256-aVjpmg+WJa6wAZwJmFEvAq0ykNtEfv+1QZIVDrplM0s=";
+    npmDepsHash = "sha256-wgggVxNUNPDZv05hiAtmbQumu2Qx1fmUrmm3Vtl1t0g=";
     npmBuildScript = "build";
 
     # Vite writes its bundle to ./dist; we only want the build artifact,
