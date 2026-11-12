@@ -74,7 +74,7 @@ buildNpmPackage {
     filter = stripNpmArtifacts;
   };
 
-  npmDepsHash = "sha256-jKdJZTKzSf20BWqfug8S9sjlaQeWfzzJ134ucLgcn2Y=";
+  npmDepsHash = "sha256-dREnitCFDWqxDjD4wz/MQsk+fDIRHiC03guv2XvA0LE=";
 
   # The server is plain CommonJS: there is nothing to compile.
   dontNpmBuild = true;
