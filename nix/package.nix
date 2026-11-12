@@ -42,7 +42,7 @@ let
       filter = stripNpmArtifacts;
     };
 
-    npmDepsHash = "sha256-wgggVxNUNPDZv05hiAtmbQumu2Qx1fmUrmm3Vtl1t0g=";
+    npmDepsHash = "sha256-aVjpmg+WJa6wAZwJmFEvAq0ykNtEfv+1QZIVDrplM0s=";
     npmBuildScript = "build";
 
     # Vite writes its bundle to ./dist; we only want the build artifact,
@@ -74,7 +74,7 @@ buildNpmPackage {
     filter = stripNpmArtifacts;
   };
 
-  npmDepsHash = "sha256-ymWHqXQ3RrAV50hD3Yd9D2URCXKfMlsoYcma8sAftXw=";
+  npmDepsHash = "sha256-jKdJZTKzSf20BWqfug8S9sjlaQeWfzzJ134ucLgcn2Y=";
 
   # The server is plain CommonJS: there is nothing to compile.
   dontNpmBuild = true;
