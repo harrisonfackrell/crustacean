@@ -1,9 +1,5 @@
 const express = require('express');
-const { getDatabase } = require('../db');
-
-function getDb() {
-  return getDatabase();
-}
+const { getDb } = require('./helpers');
 
 const router = express.Router();
 

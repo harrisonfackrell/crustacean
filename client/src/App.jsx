@@ -133,8 +133,24 @@ function AppContent() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/avatars" element={<AvatarManagePage />} />
           <Route path="/communities" element={<CommunityManagePage />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
+    </div>
+  );
+}
+
+function NotFound() {
+  return (
+    <div className="container" style={{ textAlign: 'center', padding: '48px 0' }}>
+      <h1 style={{ fontSize: '64px', marginBottom: '8px' }}>🦀</h1>
+      <h2>Page not found</h2>
+      <p style={{ color: 'var(--color-text-muted)' }}>
+        This page doesn't exist — it may have been deleted or the link is wrong.
+      </p>
+      <p>
+        <Link to="/" style={{ color: 'var(--color-accent, #e8985e)' }}>← Back to the feed</Link>
+      </p>
     </div>
   );
 }

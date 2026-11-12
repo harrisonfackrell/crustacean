@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import BulkImportModal from '../components/BulkImportModal';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
-import { useDebounce } from '../hooks/useDebounce';
+import { useDebouncedPersist } from '../hooks/useDebouncedPersist';
+import { downloadJson } from '../utils/download';
 
 function SettingsPage() {
   const [settings, setSettings] = useState({
@@ -23,11 +24,24 @@ function SettingsPage() {
   const { notify } = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
-  // Debounced drafts of the text settings; the server is only hit after the
-  // user stops typing, with a subtle "Saved" indicator as feedback.
-  const debouncedUrl = useDebounce(settings.llm_api_url, 800);
-  const debouncedKey = useDebounce(settings.llm_api_key, 800);
-  const debouncedPrompt = useDebounce(settings.global_system_prompt, 800);
+  // LLM settings persist automatically after a short idle. The hook skips
+  // the initial load, so visiting the page does not re-save current values.
+  const persistSetting = useCallback((key, value) => {
+    api.setSetting(key, value)
+      .then(() => {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 1500);
+      })
+      .catch(err => {
+        console.error('Failed to save setting:', err);
+        notify(err.message || 'Failed to save setting', 'error');
+      });
+  }, [notify]);
+
+  useDebouncedPersist('llm_api_url', settings.llm_api_url, persistSetting);
+  useDebouncedPersist('llm_api_key', settings.llm_api_key, persistSetting);
+  useDebouncedPersist('llm_model', settings.llm_model, persistSetting);
+  useDebouncedPersist('global_system_prompt', settings.global_system_prompt, persistSetting);
 
   useEffect(() => {
     loadData();
@@ -48,32 +62,6 @@ function SettingsPage() {
       setLoading(false);
     }
   };
-
-  const persistSetting = async (key, value) => {
-    try {
-      await api.setSetting(key, value);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1500);
-    } catch (err) {
-      console.error('Failed to save setting:', err);
-      notify(err.message || 'Failed to save setting', 'error');
-    }
-  };
-
-  useEffect(() => {
-    if (debouncedUrl !== settings.llm_api_url) persistSetting('llm_api_url', debouncedUrl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedUrl]);
-
-  useEffect(() => {
-    if (debouncedKey !== settings.llm_api_key) persistSetting('llm_api_key', debouncedKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedKey]);
-
-  useEffect(() => {
-    if (debouncedPrompt !== settings.global_system_prompt) persistSetting('global_system_prompt', debouncedPrompt);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedPrompt]);
 
   const fetchModels = async () => {
     if (!settings.llm_api_url) {
@@ -96,7 +84,7 @@ function SettingsPage() {
   const handleModelSelect = async (modelValue) => {
     // Save immediately on explicit selection (no debounce needed)
     setSettings({ ...settings, llm_model: modelValue });
-    await persistSetting('llm_model', modelValue);
+    persistSetting('llm_model', modelValue);
   };
 
   const handleAddRule = async () => {
@@ -126,13 +114,7 @@ function SettingsPage() {
   const handleExportAll = async () => {
     try {
       const data = await api.exportAll();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'crustacean-export.json';
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadJson(data, 'crustacean-export.json');
       notify('Export complete', 'success');
     } catch (err) {
       console.error('Failed to export:', err);
@@ -205,26 +187,23 @@ function SettingsPage() {
   };
 
   const handleQuickStart = async ({ context, avatarCount, communityCount, includeExisting }) => {
-    try {
-      const payload = { context, avatarCount, communityCount };
+    // Errors propagate to the modal, which keeps itself open and toasts
+    const payload = { context, avatarCount, communityCount };
 
-      // If the checkbox is checked, fetch and include existing data as reference
-      if (includeExisting) {
-        const existingData = await api.exportAll();
-        payload.existingData = existingData;
-      }
-
-      // Step 1: Generate the bulk import data via LLM
-      const bulkData = await api.generateBulkImport(payload);
-
-      // Step 2: Import the generated data
-      await api.importData(bulkData);
-
-      // Step 3: Reload the page to reflect changes
-      loadData();
-    } catch (err) {
-      throw err;
+    // If the checkbox is checked, fetch and include existing data as reference
+    if (includeExisting) {
+      const existingData = await api.exportAll();
+      payload.existingData = existingData;
     }
+
+    // Step 1: Generate the bulk import data via LLM
+    const bulkData = await api.generateBulkImport(payload);
+
+    // Step 2: Import the generated data
+    await api.importData(bulkData);
+
+    // Step 3: Reload the page to reflect changes
+    loadData();
   };
 
   if (loading) return <div className="loading">Loading...</div>;

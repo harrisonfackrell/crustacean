@@ -1,12 +1,16 @@
 const express = require('express');
-const { getDatabase } = require('../db');
+const { getDb } = require('./helpers');
 const { updateRelationship } = require('../utils/relationships');
 
-function getDb() {
-  return getDatabase();
-}
-
 const router = express.Router();
+
+// Resolve the author of a vote target, if it still exists.
+function getTargetAuthorId(db, target_type, target_id) {
+  if (target_type === 'post') {
+    return db.get('SELECT avatar_id FROM Posts WHERE id = ?', [target_id])?.avatar_id || null;
+  }
+  return db.get('SELECT avatar_id FROM Comments WHERE id = ?', [target_id])?.avatar_id || null;
+}
 
 router.post('/votes', (req, res) => {
   const { avatar_id, target_type, target_id, vote_value } = req.body;
@@ -20,47 +24,45 @@ router.post('/votes', (req, res) => {
     return res.status(400).json({ error: 'vote_value must be 1 or -1' });
   }
 
+  const db = getDb();
+
   // Check if a vote already exists for this avatar on this target
-  const existingVote = getDb().get(
+  const existingVote = db.get(
     'SELECT id, vote_value FROM Votes WHERE avatar_id = ? AND target_type = ? AND target_id = ?',
     [avatar_id, target_type, target_id]
   );
 
   if (existingVote) {
-    // Update existing vote
-    getDb().run(
-      'UPDATE Votes SET vote_value = ? WHERE id = ?',
-      [vote_value, existingVote.id]
-    );
-    // If the vote value changed, update the relationship accordingly
-    if (existingVote.vote_value !== vote_value) {
-      const targetAvatarId = target_type === 'post'
-        ? getDb().get('SELECT avatar_id FROM Posts WHERE id = ?', [target_id])?.avatar_id
-        : getDb().get('SELECT avatar_id FROM Comments WHERE id = ?', [target_id])?.avatar_id;
-      if (targetAvatarId) {
-        updateRelationship(getDb(), avatar_id, targetAvatarId, vote_value);
-      }
+    if (existingVote.vote_value === vote_value) {
+      return res.json({ id: existingVote.id });
     }
+    // Flipping a vote reverses the previous relationship impact, then
+    // applies the new one — otherwise each flip keeps pushing the
+    // relationship in the new direction on top of the old.
+    db.transaction(() => {
+      db.run('UPDATE Votes SET vote_value = ? WHERE id = ?', [vote_value, existingVote.id]);
+      const targetAvatarId = getTargetAuthorId(db, target_type, target_id);
+      if (targetAvatarId) {
+        updateRelationship(db, avatar_id, targetAvatarId, -existingVote.vote_value);
+        updateRelationship(db, avatar_id, targetAvatarId, vote_value);
+      }
+    });
     return res.json({ id: existingVote.id });
   }
 
   // Insert new vote
-  getDb().run(
-    'INSERT INTO Votes (avatar_id, target_type, target_id, vote_value) VALUES (?, ?, ?, ?)',
-    [avatar_id, target_type, target_id, vote_value]
-  );
+  db.transaction(() => {
+    db.run(
+      'INSERT INTO Votes (avatar_id, target_type, target_id, vote_value) VALUES (?, ?, ?, ?)',
+      [avatar_id, target_type, target_id, vote_value]
+    );
+    const targetAvatarId = getTargetAuthorId(db, target_type, target_id);
+    if (targetAvatarId) {
+      updateRelationship(db, avatar_id, targetAvatarId, vote_value);
+    }
+  });
 
-  // Update relationships
-  const targetAvatarId = target_type === 'post'
-    ? getDb().get('SELECT avatar_id FROM Posts WHERE id = ?', [target_id])?.avatar_id
-    : getDb().get('SELECT avatar_id FROM Comments WHERE id = ?', [target_id])?.avatar_id;
-
-  if (targetAvatarId) {
-    updateRelationship(getDb(), avatar_id, targetAvatarId, vote_value);
-  }
-
-  const id = getDb().lastInsertRowid();
-  res.json({ id });
+  res.json({ id: db.lastInsertRowid() });
 });
 
 // Get all votes on a target (useful for showing which avatars have voted)

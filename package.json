@@ -8,7 +8,12 @@
     "dev:server": "nodemon server/index.js",
     "dev:client": "cd client && npm run dev",
     "start": "node server/index.js",
-    "install:client": "cd client && npm install"
+    "install:client": "cd client && npm install",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write \"server/**/*.js\" \"client/src/**/*.{js,jsx}\"",
+    "format:check": "prettier --check \"server/**/*.js\" \"client/src/**/*.{js,jsx}\""
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -16,7 +21,14 @@
     "sql.js": "^1.10.3"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "concurrently": "^8.2.2",
-    "nodemon": "^3.0.2"
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.14.0",
+    "nodemon": "^3.0.2",
+    "prettier": "^3.10.0",
+    "vitest": "^3.2.7"
   }
 }

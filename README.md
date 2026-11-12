@@ -55,3 +55,46 @@ The application will be available at `http://localhost:3000` (or the port specif
 ## ⚙️ Configuration
 
 You can configure the LLM settings (API URL, API Key, Model, and System Prompt) directly through the application's Settings page.
+
+## 🧪 Development
+
+```bash
+npm test              # run unit tests (Vitest)
+npm run test:watch    # watch mode
+npm run lint          # ESLint (server + client)
+npm run format        # Prettier (server + client)
+npm run format:check  # verify formatting
+```
+
+Tests live in `test/` and cover the hotness formula, length-scale estimation,
+the avatar relationship system, the SQL enrichment/tree-building helpers, and
+the database migration runner (including upgrading a legacy database).
+
+## 📁 Project Structure
+
+```
+server/
+  index.js              # Express app + static client hosting
+  db/index.js           # sql.js wrapper: schema, versioned migrations, atomic saves
+  routes/               # one router per resource, mounted under /api
+  services/
+    llm.js              # OpenAI-compatible client (timeout, retry, global prompt)
+    enrichment.js       # shared N+1-free post/comment enrichment + comment trees
+    auto-interact/      # browsing loop: selection strategies, context, actions
+  utils/                # hotness, length scale, relationships
+client/
+  src/
+    components/         # PostCard, CommentItem, AvatarActionModal, ...
+    pages/              # one component per route
+    hooks/              # useInteract, useDebounce, useDebouncedPersist
+    utils/              # time formatting, JSON downloads
+test/                   # Vitest unit tests (ESM)
+```
+
+### Database
+
+The database file lives at `data/crustacean.db`. Schema changes are applied by
+the versioned migration runner (`PRAGMA user_version`) in [`server/db/index.js`](server/db/index.js);
+each migration is idempotent, so legacy databases (version 0) are upgraded by
+running the full list. Saves are atomic (temp file + rename) and multi-statement
+work is batched through `db.transaction()`, which persists exactly once.

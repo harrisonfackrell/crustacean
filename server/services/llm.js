@@ -1,19 +1,34 @@
 const { getDatabase } = require('../db');
+const { parseCommunityRules } = require('./enrichment');
 
 /**
  * LLM Service - handles all communication with the OpenAI-compatible backend.
  */
 
+// Requests that take longer than this are aborted. Local LLMs can be slow,
+// so this is generous; it mainly protects against hung connections.
+const REQUEST_TIMEOUT_MS = 120000;
+const MAX_RETRIES = 1;
+const RETRY_DELAY_MS = 1000;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 class LLMService {
-  constructor() {
-    this.db = getDatabase();
+  // The database is looked up lazily rather than captured in the
+  // constructor: the singleton may be created before initDatabase()
+  // completes (e.g. if a route module pulls the service at require time).
+  getDb() {
+    return getDatabase();
   }
 
   getSettings() {
-    const apiUrl = this.db.get('SELECT value FROM Settings WHERE key = ?', ['llm_api_url']);
-    const apiKey = this.db.get('SELECT value FROM Settings WHERE key = ?', ['llm_api_key']);
-    const model = this.db.get('SELECT value FROM Settings WHERE key = ?', ['llm_model']);
-    const globalPrompt = this.db.get('SELECT value FROM Settings WHERE key = ?', ['global_system_prompt']);
+    const db = this.getDb();
+    const apiUrl = db.get('SELECT value FROM Settings WHERE key = ?', ['llm_api_url']);
+    const apiKey = db.get('SELECT value FROM Settings WHERE key = ?', ['llm_api_key']);
+    const model = db.get('SELECT value FROM Settings WHERE key = ?', ['llm_model']);
+    const globalPrompt = db.get('SELECT value FROM Settings WHERE key = ?', ['global_system_prompt']);
 
     return {
       apiUrl: apiUrl?.value || 'http://localhost:11434/v1',
@@ -23,8 +38,14 @@ class LLMService {
     };
   }
 
-  async callLLM(systemPrompt, userPrompt) {
-    const { apiUrl, apiKey, model } = this.getSettings();
+  async callLLM(systemPrompt, userPrompt, options = {}) {
+    const { apiUrl, apiKey, model, globalSystemPrompt } = this.getSettings();
+
+    // The configured global system prompt applies to every call, prepended
+    // before the per-call system prompt.
+    const fullSystemPrompt = globalSystemPrompt
+      ? `${globalSystemPrompt}\n\n${systemPrompt}`
+      : systemPrompt;
 
     const headers = {
       'Content-Type': 'application/json'
@@ -37,31 +58,43 @@ class LLMService {
     const body = {
       model,
       messages: [
-        { role: 'system', content: systemPrompt },
+        { role: 'system', content: fullSystemPrompt },
         { role: 'user', content: userPrompt }
       ],
-      temperature: 0.8,
-      max_tokens: 8192
+      temperature: options.temperature ?? 0.8,
+      max_tokens: options.maxTokens ?? 8192
     };
 
-    try {
-      const response = await fetch(`${apiUrl}/chat/completions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body)
-      });
+    let lastError;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) await delay(RETRY_DELAY_MS);
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+          const response = await fetch(`${apiUrl}/chat/completions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal
+          });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`LLM API error: ${response.status} - ${errorText}`);
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`LLM API error: ${response.status} - ${errorText}`);
+          }
+
+          const data = await response.json();
+          return data.choices[0].message.content.trim();
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (error) {
+        lastError = error;
+        console.error(`LLM API call failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}):`, error.message);
       }
-
-      const data = await response.json();
-      return data.choices[0].message.content.trim();
-    } catch (error) {
-      console.error('LLM API call failed:', error.message);
-      throw error;
     }
+    throw lastError;
   }
 
   /**
@@ -81,6 +114,11 @@ class LLMService {
       ? `You are replying to a contribution by "${targetAvatar.name}" (@${targetAvatar.handle}). Their public bio: ${targetAvatar.public_bio || 'No public bio set.'}`
       : '';
 
+    const rulesText = (parseCommunityRules(community.rules).length
+      ? parseCommunityRules(community.rules).join(', ')
+      : 'No rules.');
+    const globalRulesText = globalRules.length ? globalRules.join(', ') : 'No global rules.';
+
     const systemPrompt = `
 You are an AI avatar named "${avatar.name}" (@${avatar.handle}).
 Your private bio: ${avatar.private_bio || 'No private bio set.'}
@@ -89,8 +127,8 @@ ${relationshipText}
 
 You are in the community "${community.name}".
 Description: ${community.description || 'No description.'}
-Rules: ${community.rules ? JSON.parse(community.rules).join(', ') : 'No rules.'}
-Global Rules: ${globalRules.join(', ')}
+Rules: ${rulesText}
+Global Rules: ${globalRulesText}
 
 ${extraContext}
 
@@ -157,17 +195,18 @@ Your vote (+1 or -1):
     `.trim();
 
     const result = await this.callLLM(systemPrompt, userPrompt);
-    if (result.includes('+1') || result.includes('1') && !result.includes('-1')) {
-      return 1;
-    } else if (result.includes('-1')) {
-      return -1;
-    }
-    // Default to +1 if unclear
+    // Look for an explicit vote token. "+1" must be checked before "-1" is
+    // even a consideration, and a bare digit is ambiguous — only trust
+    // explicit +/- values. Default to +1 if the LLM is unclear.
+    if (/\+\s*1/.test(result)) return 1;
+    if (/-\s*1/.test(result)) return -1;
     return 1;
   }
 
   /**
    * Generate a community preference score (-10 to 10).
+   * Accepts either a raw community row (rules as a JSON string) or an
+   * object whose rules are already an array.
    */
   async generateCommunityPreference(avatar, community) {
     const systemPrompt = `
@@ -178,9 +217,13 @@ You are evaluating a community. Reply with ONLY a number from -10 to 10.
 -10 = Strongly dislike, 0 = Indifferent, 10 = Strongly like.
     `.trim();
 
+    const rulesText = (parseCommunityRules(community.rules).length
+      ? parseCommunityRules(community.rules).join(', ')
+      : 'No rules.');
+
     const userPrompt = `Community: ${community.name}
 Description: ${community.description || 'No description.'}
-Rules: ${community.rules ? JSON.parse(community.rules).join(', ') : 'No rules.'}
+Rules: ${rulesText}
 
 Your evaluation (-10 to 10):
     `.trim();
@@ -199,7 +242,7 @@ Your evaluation (-10 to 10):
    */
   formatRelationship(actorId, targetId) {
     if (!targetId) return '';
-    const rel = this.db.get(
+    const rel = this.getDb().get(
       'SELECT score FROM AvatarRelationships WHERE actor_id = ? AND target_id = ?',
       [actorId, targetId]
     );
@@ -224,7 +267,7 @@ Your evaluation (-10 to 10):
     const clamped = Math.max(1, Math.min(10, Math.round(length)));
     const instructions = {
       1: 'Keep your contribution very brief — just 1 sentence.',
-      2: 'Keep your contribution brief — about 1 short paragraphs, which should be 5 to 7 sentences in length.',
+      2: 'Keep your contribution brief — about 1 short paragraph, which should be 5 to 7 sentences in length.',
       3: 'Write a concise contribution — about 2 to 3 paragraphs, each of which should be 5 to 7 sentences in length.',
       4: 'Write a moderate contribution — about 3 to 4 paragraphs, each of which should be 5 to 7 sentences in length.',
       5: 'Write a well-developed contribution — about 3 to 5 paragraphs, each of which should be 5 to 7 sentences in length.',
@@ -247,21 +290,21 @@ Your evaluation (-10 to 10):
     if (existingData && existingData.type === 'full_export' && existingData.data) {
       const existingAvatars = existingData.data.avatars || [];
       const existingCommunities = existingData.data.communities || [];
-      
+
       // Extract handles for explicit duplicate prevention
       const existingHandles = existingAvatars.map(a => a.data?.handle || '').filter(Boolean);
-      
+
       // Build a detailed reference of all existing entries
       const avatarDetails = existingAvatars.map(a => {
         const d = a.data || {};
         return `  - "${d.name}" (u/${d.handle}) — ${d.public_bio || 'No bio'} [private: ${d.private_bio || 'None'}]`;
       }).join('\n');
-      
+
       const communityDetails = existingCommunities.map(c => {
         const d = c.data || {};
-               return `  - "${d.name}" — ${d.description || 'No description'}`;
+        return `  - "${d.name}" — ${d.description || 'No description'}`;
       }).join('\n');
-      
+
       existingDataText = `
 IMPORTANT: You must NOT create duplicates of the following existing items. Generate new, unique entries with different names, handles, bios, and themes.
 

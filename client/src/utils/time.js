@@ -1,7 +1,26 @@
 // Relative timestamp helper for compact, readable labels.
 // Returns { label, title } where title is the full locale string for the tooltip.
+
+/**
+ * Parse a date stored by the server.
+ *
+ * SQLite's `datetime('now')` produces UTC strings like "YYYY-MM-DD HH:MM:SS"
+ * (space-separated, no timezone). JS parses space-separated date strings as
+ * LOCAL time, which shifted every displayed timestamp by the UTC offset.
+ * Normalize that format to an explicit UTC ISO string before parsing.
+ */
+export function parseDbDate(dateInput) {
+  if (typeof dateInput === 'string') {
+    const m = dateInput.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)?$/);
+    if (m) {
+      return new Date(`${m[1]}T${m[2]}Z`);
+    }
+  }
+  return new Date(dateInput);
+}
+
 export function formatRelativeTime(dateInput) {
-  const date = new Date(dateInput);
+  const date = parseDbDate(dateInput);
   if (isNaN(date.getTime())) {
     return { label: '', title: '' };
   }

@@ -1,10 +1,6 @@
 const express = require('express');
-const { getDatabase } = require('../db');
+const { getDb } = require('./helpers');
 const { getAutoInteractService } = require('../services/auto-interact');
-
-function getDb() {
-  return getDatabase();
-}
 
 const router = express.Router();
 

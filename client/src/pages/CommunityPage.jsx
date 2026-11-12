@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { downloadJson } from '../utils/download';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
 import PostCard from '../components/PostCard';
@@ -46,9 +47,7 @@ function CommunityPage({ id: idProp }) {
       loadAvatars();
     } else {
       loadGlobalRules();
-      loadAvatarCount();
-      loadCommunityCount();
-      loadCommunitiesList();
+      loadAllLists();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, sort]);
@@ -62,30 +61,19 @@ function CommunityPage({ id: idProp }) {
     }
   };
 
-  const loadAvatarCount = async () => {
+  // One batched fetch for the "all" view instead of three separate requests
+  // for the same lists.
+  const loadAllLists = async () => {
     try {
-      const data = await api.getAvatars();
-      setAvatarCount(data.length);
+      const [avatarData, communityData] = await Promise.all([
+        api.getAvatars(),
+        api.getCommunities()
+      ]);
+      setAvatarCount(avatarData.length);
+      setCommunityCount(communityData.length);
+      setCommunitiesList(communityData);
     } catch (err) {
-      console.error('Failed to load avatar count:', err);
-    }
-  };
-
-  const loadCommunityCount = async () => {
-    try {
-      const data = await api.getCommunities();
-      setCommunityCount(data.length);
-    } catch (err) {
-      console.error('Failed to load community count:', err);
-    }
-  };
-
-  const loadCommunitiesList = async () => {
-    try {
-      const data = await api.getCommunities();
-      setCommunitiesList(data);
-    } catch (err) {
-      console.error('Failed to load communities list:', err);
+      console.error('Failed to load lists:', err);
     }
   };
 
@@ -218,13 +206,7 @@ function CommunityPage({ id: idProp }) {
       const data = isPseudoCommunity
         ? await api.exportAll()
         : await api.exportCommunity(id);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = isPseudoCommunity ? 'crustacean-export.json' : `${form.name || 'community'}-export.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadJson(data, isPseudoCommunity ? 'crustacean-export.json' : `${form.name || 'community'}-export.json`);
     } catch (err) {
       console.error('Failed to export:', err);
       notify(err.message || 'Failed to export', 'error');
@@ -232,16 +214,12 @@ function CommunityPage({ id: idProp }) {
   };
 
   const handlePost = async ({ selectedAvatar, extraContext, length, inputTitle }) => {
-    try {
-      const result = await api.generatePost({ avatar_id: selectedAvatar, community_id: id, extra_context: extraContext, title: inputTitle, length });
-      await api.createPost({ community_id: id, avatar_id: selectedAvatar, title: result.title, content: result.content });
-      setPostModal(false);
-      notify('Post created', 'success');
-      loadCommunity();
-    } catch (err) {
-      // Modal keeps itself open and toasts the error
-      throw err;
-    }
+    // Errors propagate to the modal, which keeps itself open and toasts
+    const result = await api.generatePost({ avatar_id: selectedAvatar, community_id: id, extra_context: extraContext, title: inputTitle, length });
+    await api.createPost({ community_id: id, avatar_id: selectedAvatar, title: result.title, content: result.content });
+    setPostModal(false);
+    notify('Post created', 'success');
+    loadCommunity();
   };
 
   const { voteOnPost } = useInteract(loadCommunity);

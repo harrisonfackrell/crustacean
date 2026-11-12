@@ -1,19 +1,11 @@
 const express = require('express');
-const { getDatabase } = require('../db');
-
-function getDb() {
-  return getDatabase();
-}
+const { getDb, resetAllEmergentData } = require('./helpers');
 
 const router = express.Router();
 
 // GLOBAL RESET
 router.post('/reset/all', (req, res) => {
-  getDb().run('DELETE FROM Posts');
-  getDb().run('DELETE FROM Comments');
-  getDb().run('DELETE FROM Votes');
-  getDb().run('DELETE FROM AvatarCommunityPreferences');
-  getDb().run('DELETE FROM AvatarRelationships');
+  resetAllEmergentData(getDb());
   res.json({ success: true });
 });
 

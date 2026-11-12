@@ -1,4 +1,12 @@
-const { calculateHotness } = require('../utils/hotness');
+const { getDatabase } = require('../db');
+
+/**
+ * Route-level helpers: input sanitization and cascade deletes.
+ *
+ * Data enrichment (vote counts, comment trees, sorting) lives in
+ * services/enrichment.js so routes and the auto-interact service share one
+ * implementation.
+ */
 
 // Sanitize community names: remove spaces and special characters, keep only alphanumeric and hyphens
 function sanitizeCommunityName(name) {
@@ -10,91 +18,6 @@ function sanitizeAvatarHandle(handle) {
   return handle.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase();
 }
 
-function getVoteCount(getDb, targetType, targetId, voteValue) {
-  const result = getDb().get(
-    'SELECT COUNT(*) as count FROM Votes WHERE target_type = ? AND target_id = ? AND vote_value = ?',
-    [targetType, targetId, voteValue]
-  );
-  return result?.count || 0;
-}
-
-function getCommentCount(getDb, postId) {
-  const result = getDb().get(
-    'SELECT COUNT(*) as count FROM Comments WHERE post_id = ?',
-    [postId]
-  );
-  return result?.count || 0;
-}
-
-function getCommentsForPost(getDb, postId, sort = 'hot') {
-  const comments = getDb().all(
-    'SELECT * FROM Comments WHERE post_id = ? ORDER BY created_at ASC',
-    [postId]
-  );
-
-  // Build nested structure
-  const topLevel = [];
-  const map = {};
-
-  comments.forEach(c => {
-    c.avatar = getDb().get('SELECT id, name, handle FROM Avatars WHERE id = ?', [c.avatar_id]);
-    c.upvotes = getVoteCount(getDb, 'comment', c.id, 1);
-    c.downvotes = getVoteCount(getDb, 'comment', c.id, -1);
-    c.hotness = calculateHotness(c.upvotes, c.downvotes, 0, c.created_at);
-    c.score = c.upvotes - c.downvotes;
-    c.replies = [];
-    map[c.id] = c;
-  });
-
-  comments.forEach(c => {
-    if (c.parent_comment_id && map[c.parent_comment_id]) {
-      map[c.parent_comment_id].replies.push(c);
-    } else {
-      topLevel.push(c);
-    }
-  });
-
-  // Sort top-level comments
-  topLevel.sort(sortComments(getDb, sort));
-
-  // Sort nested replies recursively
-  const sortReplies = (comments) => {
-    comments.forEach(c => {
-      if (c.replies && c.replies.length > 0) {
-        c.replies.sort(sortComments(getDb, sort));
-        sortReplies(c.replies);
-      }
-    });
-  };
-  sortReplies(topLevel);
-
-  return topLevel;
-}
-
-function sortPosts(posts, sort) {
-  switch (sort) {
-    case 'new':
-      return posts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-    case 'top':
-      return posts.sort((a, b) => (b.upvotes || 0) - (a.upvotes || 0));
-    case 'hot':
-    default:
-      return posts.sort((a, b) => b.hotness - a.hotness);
-  }
-}
-
-function sortComments(getDb, sort) {
-  switch (sort) {
-    case 'new':
-      return (a, b) => new Date(b.created_at) - new Date(a.created_at);
-    case 'top':
-      return (a, b) => (b.score || 0) - (a.score || 0);
-    case 'hot':
-    default:
-      return (a, b) => b.hotness - a.hotness;
-  }
-}
-
 // ============================================================
 // Cascade delete helpers
 //
@@ -102,110 +25,142 @@ function sortComments(getDb, sort) {
 // connection never runs `PRAGMA foreign_keys = ON`), so deletes
 // must be performed explicitly to avoid orphaned rows that the
 // UI would otherwise render as "Unknown" / misleading links.
+//
+// Each cascade runs in one transaction, so the database is
+// persisted to disk exactly once per cascade.
 // ============================================================
 
 /**
  * Delete a post and everything that references it (its comments,
  * and the votes cast on the post or on any of those comments).
  */
-function deletePostCascade(getDb, postId) {
-  const db = getDb();
-  // Votes on the post's comments (must come before deleting comments)
-  db.run(
-    "DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (SELECT id FROM Comments WHERE post_id = ?)",
-    [postId]
-  );
-  // Votes on the post itself
-  db.run(
-    "DELETE FROM Votes WHERE target_type = 'post' AND target_id = ?",
-    [postId]
-  );
-  // Comments (children are removed alongside parents; replies to them are
-  // promoted to top-level by getCommentsForPost, which is the desired UX)
-  db.run('DELETE FROM Comments WHERE post_id = ?', [postId]);
-  // The post
-  db.run('DELETE FROM Posts WHERE id = ?', [postId]);
+function deletePostCascade(db, postId) {
+  db.transaction(() => {
+    // Votes on the post's comments (must come before deleting comments)
+    db.run(
+      "DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (SELECT id FROM Comments WHERE post_id = ?)",
+      [postId]
+    );
+    // Votes on the post itself
+    db.run(
+      "DELETE FROM Votes WHERE target_type = 'post' AND target_id = ?",
+      [postId]
+    );
+    // Comments (replies to deleted comments are promoted to top-level by
+    // the comment-tree builder, which is the desired UX)
+    db.run('DELETE FROM Comments WHERE post_id = ?', [postId]);
+    // The post
+    db.run('DELETE FROM Posts WHERE id = ?', [postId]);
+  });
+}
+
+/**
+ * Delete a single comment and the votes cast on it. Replies to the
+ * deleted comment are promoted to top-level by the comment-tree builder.
+ */
+function deleteCommentCascade(db, commentId) {
+  db.transaction(() => {
+    db.run(
+      "DELETE FROM Votes WHERE target_type = 'comment' AND target_id = ?",
+      [commentId]
+    );
+    db.run('DELETE FROM Comments WHERE id = ?', [commentId]);
+  });
 }
 
 /**
  * Delete a community and all of its posts (plus the comments and votes
  * that belong to those posts), then the per-avatar community preferences.
  */
-function deleteCommunityCascade(getDb, communityId) {
-  const db = getDb();
-  const postIds = db.all('SELECT id FROM Posts WHERE community_id = ?', [communityId]).map(r => r.id);
-
-  if (postIds.length > 0) {
-    // Delete posts one-by-one so each post's comments + votes are cleaned up
+function deleteCommunityCascade(db, communityId) {
+  db.transaction(() => {
+    const postIds = db.all('SELECT id FROM Posts WHERE community_id = ?', [communityId]).map(r => r.id);
     for (const postId of postIds) {
-      deletePostCascade(getDb, postId);
+      // Nested transaction: runs inline, saved once by the outer call
+      deletePostCascade(db, postId);
     }
-  }
-
-  db.run('DELETE FROM AvatarCommunityPreferences WHERE community_id = ?', [communityId]);
-  db.run('DELETE FROM Communities WHERE id = ?', [communityId]);
+    db.run('DELETE FROM AvatarCommunityPreferences WHERE community_id = ?', [communityId]);
+    db.run('DELETE FROM Communities WHERE id = ?', [communityId]);
+  });
 }
 
 /**
- * Delete an avatar and all emergent data it produced: its posts (with
- * their comments + votes), its standalone comments, all votes involving
- * its content (whether cast by it or on it), its community preferences,
- * and relationship records. Child comments that replied to a deleted
- * comment are promoted to top-level.
+ * Clear an avatar's emergent data: its posts (with their comments + votes),
+ * its standalone comments, all votes involving its content (whether cast by
+ * it or on it), its community preferences, and relationship records.
+ * The avatar row itself is kept.
  */
-function deleteAvatarCascade(getDb, avatarId) {
-  const db = getDb();
-
-  // Capture everything that will be deleted so we can clean up votes
+function clearAvatarEmergentData(db, avatarId) {
   const postIds = db.all('SELECT id FROM Posts WHERE avatar_id = ?', [avatarId]).map(r => r.id);
   const commentIds = db.all('SELECT id FROM Comments WHERE avatar_id = ?', [avatarId]).map(r => r.id);
 
-  // 1. Delete the avatar's posts (cascades to their comments + votes on them)
-  for (const postId of postIds) {
-    deletePostCascade(getDb, postId);
-  }
+  db.transaction(() => {
+    // 1. Delete the avatar's posts (cascades to their comments + votes)
+    for (const postId of postIds) {
+      deletePostCascade(db, postId);
+    }
 
-  // 2. Delete the avatar's remaining comments (on others' posts)
-  db.run('DELETE FROM Comments WHERE avatar_id = ?', [avatarId]);
+    // 2. Delete the avatar's remaining comments (on others' posts)
+    db.run('DELETE FROM Comments WHERE avatar_id = ?', [avatarId]);
 
-  // 3. Remove votes cast by OTHER avatars on the avatar's posts/comments
-  //    (votes cast by the avatar itself are removed in step 4)
-  if (postIds.length > 0) {
-    const placeholders = postIds.map(() => '?').join(', ');
-    db.run(
-      `DELETE FROM Votes WHERE target_type = 'post' AND target_id IN (${placeholders}) AND avatar_id != ?`,
-      [...postIds, avatarId]
-    );
-  }
-  if (commentIds.length > 0) {
-    const placeholders = commentIds.map(() => '?').join(', ');
-    db.run(
-      `DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (${placeholders}) AND avatar_id != ?`,
-      [...commentIds, avatarId]
-    );
-  }
+    // 3. Remove votes cast by OTHER avatars on the avatar's posts/comments
+    //    (votes cast by the avatar itself are removed in step 4)
+    if (postIds.length > 0) {
+      const placeholders = postIds.map(() => '?').join(', ');
+      db.run(
+        `DELETE FROM Votes WHERE target_type = 'post' AND target_id IN (${placeholders}) AND avatar_id != ?`,
+        [...postIds, avatarId]
+      );
+    }
+    if (commentIds.length > 0) {
+      const placeholders = commentIds.map(() => '?').join(', ');
+      db.run(
+        `DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (${placeholders}) AND avatar_id != ?`,
+        [...commentIds, avatarId]
+      );
+    }
 
-  // 4. Delete all votes cast by the avatar itself
-  db.run('DELETE FROM Votes WHERE avatar_id = ?', [avatarId]);
+    // 4. Delete all votes cast by the avatar itself
+    db.run('DELETE FROM Votes WHERE avatar_id = ?', [avatarId]);
 
-  // 5. Preferences and relationships
-  db.run('DELETE FROM AvatarCommunityPreferences WHERE avatar_id = ?', [avatarId]);
-  db.run('DELETE FROM AvatarRelationships WHERE actor_id = ? OR target_id = ?', [avatarId, avatarId]);
+    // 5. Preferences and relationships
+    db.run('DELETE FROM AvatarCommunityPreferences WHERE avatar_id = ?', [avatarId]);
+    db.run('DELETE FROM AvatarRelationships WHERE actor_id = ? OR target_id = ?', [avatarId, avatarId]);
+  });
+}
 
-  // 6. The avatar itself
-  db.run('DELETE FROM Avatars WHERE id = ?', [avatarId]);
+/**
+ * Delete an avatar and all of the emergent data it produced.
+ */
+function deleteAvatarCascade(db, avatarId) {
+  db.transaction(() => {
+    clearAvatarEmergentData(db, avatarId);
+    db.run('DELETE FROM Avatars WHERE id = ?', [avatarId]);
+  });
+}
+
+/**
+ * Delete all emergent data across the network (posts, comments, votes,
+ * preferences, relationships). Avatars, communities, and settings are kept.
+ */
+function resetAllEmergentData(db) {
+  db.transaction(() => {
+    db.run('DELETE FROM Votes');
+    db.run('DELETE FROM Comments');
+    db.run('DELETE FROM Posts');
+    db.run('DELETE FROM AvatarCommunityPreferences');
+    db.run('DELETE FROM AvatarRelationships');
+  });
 }
 
 module.exports = {
+  getDb: getDatabase,
   sanitizeCommunityName,
   sanitizeAvatarHandle,
-  getVoteCount,
-  getCommentCount,
-  getCommentsForPost,
-  sortPosts,
-  sortComments,
-  calculateHotness,
   deletePostCascade,
+  deleteCommentCascade,
   deleteCommunityCascade,
+  clearAvatarEmergentData,
   deleteAvatarCascade,
+  resetAllEmergentData
 };

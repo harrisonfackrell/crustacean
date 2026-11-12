@@ -14,6 +14,7 @@ client/dist/
 
 # Database files
 data/*.db
+data/*.db.tmp
 data/*.sqlite
 data/*.sqlite3
 

@@ -1,19 +1,16 @@
 const express = require('express');
-const { getDatabase } = require('../db');
+const { getDb } = require('./helpers');
 const { getLLMService } = require('../services/llm');
-
-function getDb() {
-  return getDatabase();
-}
 
 const router = express.Router();
 
 // LLM CONTENT GENERATION (Manual Provocation)
 router.post('/llm/generate-post', async (req, res) => {
   const { avatar_id, community_id, extra_context, title, length } = req.body;
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
-  const community = getDb().get('SELECT * FROM Communities WHERE id = ?', [community_id]);
-  const globalRules = getDb().all('SELECT rule FROM GlobalRules');
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
+  const community = db.get('SELECT * FROM Communities WHERE id = ?', [community_id]);
+  const globalRules = db.all('SELECT rule FROM GlobalRules ORDER BY id').map(r => r.rule);
 
   if (!avatar || !community) {
     return res.status(404).json({ error: 'Avatar or Community not found' });
@@ -35,7 +32,8 @@ router.post('/llm/generate-post', async (req, res) => {
 
 router.post('/llm/generate-comment', async (req, res) => {
   const { avatar_id, target_type, target_id, extra_context, length } = req.body;
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
 
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
@@ -44,27 +42,26 @@ router.post('/llm/generate-comment', async (req, res) => {
   let targetAvatar, community, context = '';
 
   if (target_type === 'post') {
-    const post = getDb().get('SELECT * FROM Posts WHERE id = ?', [target_id]);
+    const post = db.get('SELECT * FROM Posts WHERE id = ?', [target_id]);
     if (!post) return res.status(404).json({ error: 'Post not found' });
-    community = getDb().get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
-    targetAvatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
-    const postAvatar = targetAvatar;
-    context = `--- Post by ${postAvatar?.name} (@${postAvatar?.handle}) ---\n`;
+    community = db.get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
+    targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [post.avatar_id]);
+    context = `--- Post by ${targetAvatar?.name} (@${targetAvatar?.handle}) ---\n`;
     if (post.title) context += `Title: ${post.title}\n`;
     context += `Content: ${post.content}`;
   } else if (target_type === 'comment') {
-    const comment = getDb().get('SELECT * FROM Comments WHERE id = ?', [target_id]);
+    const comment = db.get('SELECT * FROM Comments WHERE id = ?', [target_id]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
-    const post = getDb().get('SELECT * FROM Posts WHERE id = ?', [comment.post_id]);
-    community = getDb().get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
-    targetAvatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [comment.avatar_id]);
+    const post = db.get('SELECT * FROM Posts WHERE id = ?', [comment.post_id]);
+    community = db.get('SELECT * FROM Communities WHERE id = ?', [post.community_id]);
+    targetAvatar = db.get('SELECT * FROM Avatars WHERE id = ?', [comment.avatar_id]);
 
     // Build the full thread chain from root post up to the target comment
-    const chain = buildCommentChain(getDb(), comment);
+    const chain = buildCommentChain(db, comment);
     context = buildThreadContext(chain);
   }
 
-  const globalRules = getDb().all('SELECT rule FROM GlobalRules');
+  const globalRules = db.all('SELECT rule FROM GlobalRules ORDER BY id').map(r => r.rule);
 
   try {
     const content = await getLLMService().generateContent('comment', avatar, targetAvatar, community, globalRules, context, extra_context || '', '', Number(length) || 3);
@@ -108,7 +105,7 @@ function buildCommentChain(db, comment) {
  * Find the path from the root post to the target comment,
  * returning each intermediate comment with its avatar.
  */
-function findPathToComment(db, targetComment, post) {
+function findPathToComment(db, targetComment, _post) {
   const path = [];
   const ancestors = [];
 
@@ -156,7 +153,8 @@ function buildThreadContext(chain) {
 
 router.post('/llm/generate-vote', async (req, res) => {
   const { avatar_id, target_type, target_id } = req.body;
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [avatar_id]);
 
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
@@ -164,11 +162,11 @@ router.post('/llm/generate-vote', async (req, res) => {
 
   let text;
   if (target_type === 'post') {
-    const post = getDb().get('SELECT content FROM Posts WHERE id = ?', [target_id]);
+    const post = db.get('SELECT content FROM Posts WHERE id = ?', [target_id]);
     if (!post) return res.status(404).json({ error: 'Post not found' });
     text = post.content;
   } else {
-    const comment = getDb().get('SELECT content FROM Comments WHERE id = ?', [target_id]);
+    const comment = db.get('SELECT content FROM Comments WHERE id = ?', [target_id]);
     if (!comment) return res.status(404).json({ error: 'Comment not found' });
     text = comment.content;
   }

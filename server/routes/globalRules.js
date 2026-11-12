@@ -1,9 +1,5 @@
 const express = require('express');
-const { getDatabase } = require('../db');
-
-function getDb() {
-  return getDatabase();
-}
+const { getDb } = require('./helpers');
 
 const router = express.Router();
 
@@ -17,9 +13,9 @@ router.post('/global-rules', (req, res) => {
   if (!rule) {
     return res.status(400).json({ error: 'rule is required' });
   }
-  getDb().run('INSERT INTO GlobalRules (rule) VALUES (?)', [rule]);
-  const id = getDb().lastInsertRowid();
-  res.json({ id, rule });
+  const db = getDb();
+  db.run('INSERT INTO GlobalRules (rule) VALUES (?)', [rule]);
+  res.json({ id: db.lastInsertRowid(), rule });
 });
 
 router.delete('/global-rules/:id', (req, res) => {

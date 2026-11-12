@@ -1,65 +1,67 @@
 const express = require('express');
-const { getDatabase } = require('../db');
-const { sanitizeAvatarHandle, getVoteCount, deleteAvatarCascade, deletePostCascade } = require('./helpers');
+const {
+  getDb,
+  sanitizeAvatarHandle,
+  deleteAvatarCascade,
+  clearAvatarEmergentData
+} = require('./helpers');
+const { enrichPosts, enrichComments } = require('../services/enrichment');
 
-function getDb() {
-  return getDatabase();
-}
+// Upper bound on history items returned by GET /avatars/:id so the payload
+// stays bounded even for very active avatars. The UI paginates client-side.
+const HISTORY_LIMIT = 50;
 
 const router = express.Router();
 
 router.get('/avatars', (req, res) => {
-  const avatars = getDb().all('SELECT * FROM Avatars');
+  const avatars = getDb().all('SELECT * FROM Avatars ORDER BY id');
   res.json(avatars);
 });
 
 router.get('/avatars/:id', (req, res) => {
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
 
-  // Karma calculation
-  const upvotes = getDb().all(
-    `SELECT v.vote_value FROM Votes v
+  // Karma: one aggregate query instead of loading every vote row.
+  // Includes votes cast on this avatar's content, whether or not the
+  // underlying post/comment still exists (matches previous behavior).
+  const karmaRow = db.get(
+    `SELECT COALESCE(SUM(v.vote_value), 0) as karma
+     FROM Votes v
      LEFT JOIN Posts p ON v.target_type = 'post' AND v.target_id = p.id
      LEFT JOIN Comments c ON v.target_type = 'comment' AND v.target_id = c.id
      WHERE (p.avatar_id = ? OR c.avatar_id = ?)`,
     [avatar.id, avatar.id]
   );
-  const karma = upvotes.reduce((sum, v) => sum + v.vote_value, 0);
+  const karma = karmaRow ? karmaRow.karma : 0;
 
-  const posts = getDb().all(
-    'SELECT * FROM Posts WHERE avatar_id = ? ORDER BY created_at DESC',
-    [avatar.id]
-  ).map(post => ({
-    ...post,
-    community: getDb().get('SELECT id, name FROM Communities WHERE id = ?', [post.community_id]),
-    upvotes: getVoteCount(getDb, 'post', post.id, 1),
-    downvotes: getVoteCount(getDb, 'post', post.id, -1),
-  }));
-  const comments = getDb().all(
-    'SELECT * FROM Comments WHERE avatar_id = ? ORDER BY created_at DESC',
-    [avatar.id]
-  ).map(comment => {
-    const post = getDb().get('SELECT id, title, community_id FROM Posts WHERE id = ?', [comment.post_id]);
-    const community = post ? getDb().get('SELECT id, name FROM Communities WHERE id = ?', [post.community_id]) : null;
-    return {
-      ...comment,
-      post_title: post?.title || null,
-      post_id: comment.post_id,
-      community,
-      upvotes: getVoteCount(getDb, 'comment', comment.id, 1),
-      downvotes: getVoteCount(getDb, 'comment', comment.id, -1),
-    };
-  });
-  const votes = getDb().all(
+  // History, newest first, bounded (see HISTORY_LIMIT)
+  const posts = enrichPosts(db, db.all(
+    'SELECT * FROM Posts WHERE avatar_id = ? ORDER BY created_at DESC LIMIT ?',
+    [avatar.id, HISTORY_LIMIT]
+  ));
+  const comments = enrichComments(db, db.all(
+    'SELECT * FROM Comments WHERE avatar_id = ? ORDER BY created_at DESC LIMIT ?',
+    [avatar.id, HISTORY_LIMIT]
+  ));
+  for (const comment of comments) {
+    const post = db.get('SELECT id, title, community_id FROM Posts WHERE id = ?', [comment.post_id]);
+    comment.post_title = post ? post.title : null;
+    if (post) {
+      comment.community = db.get('SELECT id, name FROM Communities WHERE id = ?', [post.community_id]) || null;
+    }
+  }
+
+  const votes = db.all(
     'SELECT * FROM Votes WHERE avatar_id = ? ORDER BY created_at DESC',
     [avatar.id]
   );
 
   // Friends and foes
-  const relationships = getDb().all(
+  const relationships = db.all(
     `SELECT ar.score, a.id, a.name, a.handle
      FROM AvatarRelationships ar
      JOIN Avatars a ON ar.target_id = a.id
@@ -83,31 +85,30 @@ router.post('/avatars', (req, res) => {
   if (!sanitizedHandle) {
     return res.status(400).json({ error: 'handle must contain at least one valid character (a-z, 0-9, _)' });
   }
-  getDb().run(
+  const db = getDb();
+  db.run(
     'INSERT INTO Avatars (name, handle, private_bio, public_bio) VALUES (?, ?, ?, ?)',
     [name, sanitizedHandle, private_bio || '', public_bio || '']
   );
-  const id = getDb().lastInsertRowid();
-  res.json({ id, name, handle: sanitizedHandle });
+  res.json({ id: db.lastInsertRowid(), name, handle: sanitizedHandle });
 });
 
 router.put('/avatars/:id', (req, res) => {
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
   const { name, handle, private_bio, public_bio } = req.body;
   // Sanitize handle if provided and different from existing
-  let sanitizedHandle = handle;
+  let sanitizedHandle = avatar.handle;
   if (handle && handle !== avatar.handle) {
     sanitizedHandle = sanitizeAvatarHandle(handle);
     if (!sanitizedHandle) {
       return res.status(400).json({ error: 'handle must contain at least one valid character (a-z, 0-9, _)' });
     }
-  } else {
-    sanitizedHandle = avatar.handle;
   }
-  getDb().run(
+  db.run(
     'UPDATE Avatars SET name = COALESCE(?, name), handle = COALESCE(?, handle), private_bio = COALESCE(?, private_bio), public_bio = COALESCE(?, public_bio) WHERE id = ?',
     [name, sanitizedHandle, private_bio, public_bio, avatar.id]
   );
@@ -115,44 +116,28 @@ router.put('/avatars/:id', (req, res) => {
 });
 
 router.delete('/avatars/:id', (req, res) => {
-  deleteAvatarCascade(getDb, req.params.id);
+  deleteAvatarCascade(getDb(), req.params.id);
   res.json({ success: true });
 });
 
 router.post('/avatars/:id/reset', (req, res) => {
-  const avatar = getDb().get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
+  const db = getDb();
+  const avatar = db.get('SELECT * FROM Avatars WHERE id = ?', [req.params.id]);
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
-  // Clear emergent data (with full cascade to comments/votes on its content)
-  const postIds = getDb().all('SELECT id FROM Posts WHERE avatar_id = ?', [avatar.id]).map(r => r.id);
-  for (const postId of postIds) {
-    deletePostCascade(getDb, postId);
-  }
-  // Remove votes cast by other avatars on this avatar's remaining comments
-  const commentIds = getDb().all('SELECT id FROM Comments WHERE avatar_id = ?', [avatar.id]).map(r => r.id);
-  if (commentIds.length > 0) {
-    const placeholders = commentIds.map(() => '?').join(', ');
-    getDb().run(
-      `DELETE FROM Votes WHERE target_type = 'comment' AND target_id IN (${placeholders}) AND avatar_id != ?`,
-      [...commentIds, avatar.id]
-    );
-  }
-  getDb().run('DELETE FROM Comments WHERE avatar_id = ?', [avatar.id]);
-  getDb().run('DELETE FROM Votes WHERE avatar_id = ?', [avatar.id]);
-  getDb().run('DELETE FROM AvatarCommunityPreferences WHERE avatar_id = ?', [avatar.id]);
-  getDb().run('DELETE FROM AvatarRelationships WHERE actor_id = ?', [avatar.id]);
-  getDb().run('DELETE FROM AvatarRelationships WHERE target_id = ?', [avatar.id]);
+  clearAvatarEmergentData(db, avatar.id);
   res.json({ success: true });
 });
 
 router.get('/avatars/:id/export', (req, res) => {
-  const avatar = getDb().get('SELECT name, handle, private_bio, public_bio FROM Avatars WHERE id = ?', [req.params.id]);
+  const db = getDb();
+  const avatar = db.get('SELECT name, handle, private_bio, public_bio FROM Avatars WHERE id = ?', [req.params.id]);
   if (!avatar) {
     return res.status(404).json({ error: 'Avatar not found' });
   }
   // Exclude id from export to avoid duplicate key errors on import
-  const { id, ...avatarData } = avatar;
+  const { id: _id, ...avatarData } = avatar;
   res.json({ type: 'avatar', data: avatarData });
 });
 

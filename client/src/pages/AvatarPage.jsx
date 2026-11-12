@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api';
-import PostCard from '../components/PostCard';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import { formatRelativeTime } from '../utils/time';
+import { downloadJson } from '../utils/download';
 
 const MAX_CONTENT_LENGTH = 200; // Characters before truncation
 const HISTORY_PAGE_SIZE = 25;
@@ -79,13 +79,7 @@ function AvatarPage() {
   const handleExport = async () => {
     try {
       const data = await api.exportAvatar(id);
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${form.handle || 'avatar'}-export.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadJson(data, `${form.handle || 'avatar'}-export.json`);
     } catch (err) {
       console.error('Failed to export avatar:', err);
       notify(err.message || 'Failed to export avatar', 'error');

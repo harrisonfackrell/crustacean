@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../api';
 import PostCard from '../components/PostCard';
 import CommentItem from '../components/CommentItem';
